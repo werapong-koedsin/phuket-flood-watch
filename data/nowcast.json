@@ -1,242 +1,87 @@
-#!/usr/bin/env python3
-"""
-Phuket Radar Nowcast — pySTEPS optical flow extrapolation (0–60 นาที)
-รันโดย GitHub Actions ทุก ~15 นาที → เขียนผลลง data/nowcast.json ให้ dashboard ดึงไปใช้
-
-Pipeline:
-  1. ดึงรายการเฟรมเรดาร์จาก RainViewer weather-maps.json (เฟรมย้อนหลังห่างกัน 10 นาที)
-  2. ดาวน์โหลด tile แบบ color scheme 0 (Black & White dBZ) ครอบโดเมนรอบภูเก็ต
-     ถอดค่า: snow ถ้า R&128, dBZ = (R & 127) - 32   [ตามสเปก RainViewer/Rainbow]
-  3. แปลง dBZ → อัตราฝน (มม./ชม.) ด้วย Marshall–Palmer: Z = 200 R^1.6
-  4. pySTEPS: Lucas–Kanade optical flow จาก 6 เฟรมล่าสุด → semi-Lagrangian extrapolation 6 ก้าว (10 นาที/ก้าว)
-  5. สรุปรายอำเภอ (mask จาก polygon จริง): p95 และ mean ของอัตราฝนต่อก้าว + ฝนสะสม 60 นาที
-  6. เขียน data/nowcast.json
-
-ทดสอบโดยไม่ต่อเน็ต: python nowcast.py --synthetic
-"""
-import json
-import math
-import sys
-import time
-from datetime import datetime, timezone
-from io import BytesIO
-from pathlib import Path
-
-import numpy as np
-
-# ---------------- CONFIG ----------------
-ZOOM = 9                      # ~0.3 กม./พิกเซลที่ศูนย์สูตร ก่อน pooling
-POOL = 4                      # block-max pooling → ~1.2 กม./พิกเซล (ใกล้ resolution จริงของเรดาร์)
-N_PAST_FRAMES = 6             # เฟรมย้อนหลังที่ใช้หา motion (6 เฟรม = 50 นาที)
-N_FORECAST_STEPS = 6          # พยากรณ์ 6 ก้าว × 10 นาที = 60 นาที
-STEP_MIN = 10
-# โดเมนกว้างกว่าภูเก็ตมาก เพื่อให้เห็น cell ต้นลม (มรสุม SW พัดจากทะเลอันดามัน)
-LON_MIN, LON_MAX = 97.55, 99.15
-LAT_MIN, LAT_MAX = 7.00, 8.75
-MIN_DBZ = 10.0                # ต่ำกว่านี้ถือว่า noise/ฝนละออง → อัตราฝน 0
-TILE_URL = "{host}{path}/256/{z}/{x}/{y}/0/0_0.png"   # color 0 = BW dBZ, options 0_0 = ไม่ smooth
-MAPS_JSON = "https://api.rainviewer.com/public/weather-maps.json"
-
-ROOT = Path(__file__).resolve().parent.parent
-DISTRICTS_FILE = ROOT / "data" / "phuket_districts.json"
-OUT_FILE = ROOT / "data" / "nowcast.json"
-
-# ---------------- Web Mercator helpers ----------------
-def lonlat_to_global_px(lon, lat, z):
-    n = 256 * (2 ** z)
-    x = (lon + 180.0) / 360.0 * n
-    lat_r = math.radians(lat)
-    y = (1.0 - math.log(math.tan(lat_r) + 1.0 / math.cos(lat_r)) / math.pi) / 2.0 * n
-    return x, y
-
-def tile_range(z):
-    x0, y0 = lonlat_to_global_px(LON_MIN, LAT_MAX, z)   # มุมบนซ้าย
-    x1, y1 = lonlat_to_global_px(LON_MAX, LAT_MIN, z)   # มุมล่างขวา
-    tx0, ty0 = int(x0 // 256), int(y0 // 256)
-    tx1, ty1 = int(x1 // 256), int(y1 // 256)
-    return tx0, tx1, ty0, ty1
-
-# ---------------- Data acquisition ----------------
-def fetch_frames():
-    import requests
-    j = requests.get(MAPS_JSON, timeout=30).json()
-    host = j["host"]
-    past = j["radar"]["past"][-N_PAST_FRAMES:]
-    tx0, tx1, ty0, ty1 = tile_range(ZOOM)
-    w = (tx1 - tx0 + 1) * 256
-    h = (ty1 - ty0 + 1) * 256
-    frames, times = [], []
-    from PIL import Image
-    sess = requests.Session()
-    for fr in past:
-        mosaic = np.zeros((h, w), dtype=np.uint8)
-        for ty in range(ty0, ty1 + 1):
-            for tx in range(tx0, tx1 + 1):
-                url = TILE_URL.format(host=host, path=fr["path"], z=ZOOM, x=tx, y=ty)
-                r = sess.get(url, timeout=30)
-                if r.status_code != 200:
-                    continue
-                img = np.array(Image.open(BytesIO(r.content)).convert("RGBA"))
-                red = img[:, :, 0].copy()
-                red[img[:, :, 3] == 0] = 0          # โปร่งใส = ไม่มี echo
-                mosaic[(ty - ty0) * 256:(ty - ty0 + 1) * 256,
-                       (tx - tx0) * 256:(tx - tx0 + 1) * 256] = red
-        frames.append(mosaic)
-        times.append(fr["time"])
-    origin = (tx0 * 256, ty0 * 256)                  # global px ของมุมบนซ้าย mosaic
-    return np.stack(frames), times, origin
-
-MAX_DBZ = 70.0                # เกินนี้ไม่ใช่ฝนจริง (มัก R=127/255 = nodata/ขอบ coverage) → ทิ้ง
-
-def decode_to_rate(raw):
-    """uint8 (R channel) → อัตราฝน มม./ชม.
-    - snow flag (bit 128): ในเขตร้อนถือเป็น artifact → ทิ้งเป็น 0
-    - dBZ > MAX_DBZ: การเข้ารหัส nodata/นอก coverage → ทิ้งเป็น 0
-    """
-    snow = (raw & 128) > 0
-    dbz = ((raw.astype(np.int16) & 127) - 32).astype(np.float32)
-    invalid = snow | (dbz > MAX_DBZ)
-    n_inv = int(invalid.sum())
-    if n_inv:
-        print(f"  filtered {n_inv} invalid px ({n_inv / raw.size * 100:.3f}%) "
-              f"[snow-flag: {int(snow.sum())}, dbz>{MAX_DBZ:.0f}: {int((dbz > MAX_DBZ).sum())}]")
-    dbz[invalid] = -32.0
-    dbz[dbz < MIN_DBZ] = -32.0
-    z = 10.0 ** (dbz / 10.0)
-    rate = (z / 200.0) ** (1.0 / 1.6)                # Marshall–Palmer
-    rate[dbz <= -32.0] = 0.0
-    rate[rate < 0.1] = 0.0
-    return rate
-
-def block_max_pool(a, k):
-    t, h, w = a.shape
-    h2, w2 = (h // k) * k, (w // k) * k
-    a = a[:, :h2, :w2].reshape(t, h2 // k, k, w2 // k, k)
-    return a.max(axis=(2, 4))
-
-MIN_BLOB_PX = 4   # กลุ่ม echo เล็กกว่านี้ (~6 ตร.กม. ที่ 1.2 กม./px) ถือเป็น clutter/speckle → ทิ้ง
-
-def remove_speckles(stack):
-    """ตัด echo กลุ่มเล็ก (ground clutter รอบจุดตั้งเรดาร์, speckle) ออกจากทุกเฟรม
-    cell ฝน convective จริงมีขนาดหลายสิบ ตร.กม. ขึ้นไปเสมอ"""
-    from scipy import ndimage
-    removed = 0
-    for t in range(stack.shape[0]):
-        lab, n = ndimage.label(stack[t] > 0)
-        if n == 0:
-            continue
-        sizes = ndimage.sum(np.ones_like(lab), lab, index=np.arange(1, n + 1))
-        small = np.isin(lab, np.where(sizes < MIN_BLOB_PX)[0] + 1)
-        removed += int(small.sum())
-        stack[t][small] = 0.0
-    if removed:
-        print(f"  speckle removal: cleared {removed} px across {stack.shape[0]} frames")
-    return stack
-
-# ---------------- District masks ----------------
-def build_masks(shape, origin, pool):
-    from matplotlib.path import Path as MplPath
-    with open(DISTRICTS_FILE, encoding="utf-8") as f:
-        gj = json.load(f)
-    h, w = shape
-    yy, xx = np.mgrid[0:h, 0:w]
-    pts = np.column_stack([(xx.ravel() * pool + pool / 2 + origin[0]),
-                           (yy.ravel() * pool + pool / 2 + origin[1])])
-    masks = {}
-    for feat in gj["features"]:
-        name = feat["properties"]["amp_en"]
-        geom = feat["geometry"]
-        polys = geom["coordinates"] if geom["type"] == "MultiPolygon" else [geom["coordinates"]]
-        m = np.zeros(h * w, dtype=bool)
-        for poly in polys:
-            ring = poly[0]
-            ring_px = [lonlat_to_global_px(lon, lat, ZOOM) for lon, lat in ring]
-            m |= MplPath(ring_px).contains_points(pts)
-        masks[name] = m.reshape(h, w)
-        if m.sum() == 0:
-            print(f"WARNING: empty mask for {name}", file=sys.stderr)
-    return masks
-
-# ---------------- Nowcast ----------------
-def run_nowcast(rate_stack):
-    from pysteps import motion, nowcasts
-    # หา motion บน log-rate (ลดอิทธิพลค่า extreme) — แนวปฏิบัติมาตรฐานของ pySTEPS
-    with np.errstate(divide="ignore"):
-        db = 10.0 * np.log10(np.where(rate_stack > 0.01, rate_stack, 0.01))
-    v = motion.get_method("LK")(db)
-    fc = nowcasts.get_method("extrapolation")(rate_stack[-1], v, timesteps=N_FORECAST_STEPS)
-    return np.nan_to_num(fc, nan=0.0)
-
-def summarize(fc, rate_now, masks):
-    out = {}
-    for name, m in masks.items():
-        if m.sum() == 0:
-            continue
-        series_p95 = [round(float(np.percentile(fc[t][m], 95)), 2) for t in range(fc.shape[0])]
-        series_mean = [round(float(fc[t][m].mean()), 2) for t in range(fc.shape[0])]
-        out[name] = {
-            "rate_now_p95": round(float(np.percentile(rate_now[m], 95)), 2),
-            "rate_now_mean": round(float(rate_now[m].mean()), 2),
-            "series_p95": series_p95,
-            "series_mean": series_mean,
-            "rain60_p95": round(sum(series_p95) * STEP_MIN / 60.0, 2),
-            "rain60_mean": round(sum(series_mean) * STEP_MIN / 60.0, 2),
-            "peak_rate_60min": max([out_v for out_v in series_p95] + [0.0]),
-        }
-    return out
-
-# ---------------- Synthetic test mode ----------------
-def synthetic_stack(origin_shape):
-    """cell ฝนเกาส์เซียนเคลื่อนจาก SW ไป NE — ไว้ทดสอบ pipeline โดยไม่ต่อเน็ต"""
-    t, h, w = N_PAST_FRAMES, origin_shape[0], origin_shape[1]
-    yy, xx = np.mgrid[0:h, 0:w]
-    stack = np.zeros((t, h, w), dtype=np.float32)
-    for i in range(t):
-        cx, cy = w * 0.25 + i * 8, h * 0.75 - i * 6
-        stack[i] = 40.0 * np.exp(-(((xx - cx) ** 2 + (yy - cy) ** 2) / (2 * 12 ** 2)))
-    return stack
-
-# ---------------- Main ----------------
-def main():
-    synthetic = "--synthetic" in sys.argv
-    t0 = time.time()
-
-    if synthetic:
-        tx0, tx1, ty0, ty1 = tile_range(ZOOM)
-        h = ((ty1 - ty0 + 1) * 256) // POOL
-        w = ((tx1 - tx0 + 1) * 256) // POOL
-        origin = (tx0 * 256, ty0 * 256)
-        rate = synthetic_stack((h, w))
-        times = [int(time.time()) - (N_PAST_FRAMES - 1 - i) * 600 for i in range(N_PAST_FRAMES)]
-    else:
-        raw, times, origin = fetch_frames()
-        rate_full = decode_to_rate(raw)
-        rate = block_max_pool(rate_full, POOL).astype(np.float32)
-        rate = remove_speckles(rate)
-
-    print(f"frames: {rate.shape}, domain px size after pool: {rate.shape[1:]}, "
-          f"nonzero last frame: {(rate[-1] > 0).mean() * 100:.1f}%")
-
-    fc = run_nowcast(rate)
-    masks = build_masks(rate.shape[1:], origin, POOL)
-    districts = summarize(fc, rate[-1], masks)
-
-    result = {
-        "generated_utc": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
-        "latest_frame_utc": datetime.fromtimestamp(times[-1], timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
-        "latest_frame_unix": times[-1],
-        "steps_min": [STEP_MIN * (i + 1) for i in range(N_FORECAST_STEPS)],
-        "method": "pySTEPS LK optical flow + semi-Lagrangian extrapolation",
-        "source": "RainViewer BW-dBZ tiles, Marshall-Palmer Z=200R^1.6",
-        "synthetic": synthetic,
-        "districts": districts,
-    }
-    OUT_FILE.parent.mkdir(parents=True, exist_ok=True)
-    with open(OUT_FILE, "w", encoding="utf-8") as f:
-        json.dump(result, f, ensure_ascii=False, indent=1)
-    print(f"wrote {OUT_FILE} in {time.time() - t0:.1f}s")
-    for k, v in districts.items():
-        print(f"  {k}: now p95 {v['rate_now_p95']} mm/h | rain60 p95 {v['rain60_p95']} mm")
-
-if __name__ == "__main__":
-    main()
+{
+ "generated_utc": "2026-07-02T12:56:09Z",
+ "latest_frame_utc": "2026-07-02T12:50:00Z",
+ "latest_frame_unix": 1782996600,
+ "steps_min": [
+  10,
+  20,
+  30,
+  40,
+  50,
+  60
+ ],
+ "method": "pySTEPS LK optical flow + semi-Lagrangian extrapolation",
+ "source": "RainViewer BW-dBZ tiles, Marshall-Palmer Z=200R^1.6",
+ "synthetic": false,
+ "districts": {
+  "Kathu": {
+   "rate_now_p95": 0.0,
+   "rate_now_mean": 0.0,
+   "series_p95": [
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0
+   ],
+   "series_mean": [
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0
+   ],
+   "rain60_p95": 0.0,
+   "rain60_mean": 0.0,
+   "peak_rate_60min": 0.0
+  },
+  "Thalang": {
+   "rate_now_p95": 0.0,
+   "rate_now_mean": 0.53,
+   "series_p95": [
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0
+   ],
+   "series_mean": [
+    0.53,
+    0.53,
+    0.53,
+    0.53,
+    0.53,
+    0.53
+   ],
+   "rain60_p95": 0.0,
+   "rain60_mean": 0.53,
+   "peak_rate_60min": 0.0
+  },
+  "Mueang Phuket": {
+   "rate_now_p95": 0.0,
+   "rate_now_mean": 0.0,
+   "series_p95": [
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0
+   ],
+   "series_mean": [
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0
+   ],
+   "rain60_p95": 0.0,
+   "rain60_mean": 0.0,
+   "peak_rate_60min": 0.0
+  }
+ }
+}
