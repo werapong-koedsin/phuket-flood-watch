@@ -49,6 +49,12 @@ def lonlat_to_global_px(lon, lat, z):
     y = (1.0 - math.log(math.tan(lat_r) + 1.0 / math.cos(lat_r)) / math.pi) / 2.0 * n
     return x, y
 
+def global_px_to_lonlat(x, y, z):
+    n = 256 * (2 ** z)
+    lon = x / n * 360.0 - 180.0
+    lat = math.degrees(math.atan(math.sinh(math.pi * (1 - 2 * y / n))))
+    return lon, lat
+
 def tile_range(z):
     x0, y0 = lonlat_to_global_px(LON_MIN, LAT_MAX, z)   # มุมบนซ้าย
     x1, y1 = lonlat_to_global_px(LON_MAX, LAT_MIN, z)   # มุมล่างขวา
@@ -113,6 +119,44 @@ def block_max_pool(a, k):
     h2, w2 = (h // k) * k, (w // k) * k
     a = a[:, :h2, :w2].reshape(t, h2 // k, k, w2 // k, k)
     return a.max(axis=(2, 4))
+
+MIN_BLOB_PX = 4   # กลุ่ม echo เล็กกว่านี้ (~6 ตร.กม. ที่ 1.2 กม./px) ถือเป็น clutter/speckle → ทิ้ง
+
+def remove_speckles(stack):
+    """ตัด echo กลุ่มเล็ก (ground clutter รอบจุดตั้งเรดาร์, speckle) ออกจากทุกเฟรม
+    cell ฝน convective จริงมีขนาดหลายสิบ ตร.กม. ขึ้นไปเสมอ"""
+    from scipy import ndimage
+    removed = 0
+    for t in range(stack.shape[0]):
+        lab, n = ndimage.label(stack[t] > 0)
+        if n == 0:
+            continue
+        sizes = ndimage.sum(np.ones_like(lab), lab, index=np.arange(1, n + 1))
+        small = np.isin(lab, np.where(sizes < MIN_BLOB_PX)[0] + 1)
+        removed += int(small.sum())
+        stack[t][small] = 0.0
+    if removed:
+        print(f"  speckle removal: cleared {removed} px across {stack.shape[0]} frames")
+    return stack
+
+def remove_static_clutter(stack, origin, pool):
+    """ตัด echo ที่ 'นิ่ง' ผิดธรรมชาติ: มีค่าครบทุกเฟรม (50 นาที) และแทบไม่แกว่ง
+    ฝน convective จริงเคลื่อนที่/เปลี่ยนความแรงเสมอ — echo นิ่ง = ground clutter
+    (เช่น รอบสถานีเรดาร์ไม้ขาว อ.ถลาง) หรือสิ่งปลูกสร้าง/ภูมิประเทศ"""
+    pos_all = (stack > 0).all(axis=0)
+    mean = stack.mean(axis=0)
+    cv = stack.std(axis=0) / (mean + 1e-6)
+    clutter = pos_all & (cv < 0.2)
+    n = int(clutter.sum())
+    if n:
+        ys, xs = np.where(clutter)
+        gx = xs.mean() * pool + origin[0]
+        gy = ys.mean() * pool + origin[1]
+        lon, lat = global_px_to_lonlat(gx, gy, ZOOM)
+        print(f"  static-clutter filter: cleared {n} px, centroid ~({lat:.3f}N, {lon:.3f}E), "
+              f"mean rate {float(mean[clutter].mean()):.1f} mm/h")
+        stack[:, clutter] = 0.0
+    return stack
 
 # ---------------- District masks ----------------
 def build_masks(shape, origin, pool):
@@ -193,6 +237,8 @@ def main():
         raw, times, origin = fetch_frames()
         rate_full = decode_to_rate(raw)
         rate = block_max_pool(rate_full, POOL).astype(np.float32)
+        rate = remove_speckles(rate)
+        rate = remove_static_clutter(rate, origin, POOL)
 
     print(f"frames: {rate.shape}, domain px size after pool: {rate.shape[1:]}, "
           f"nonzero last frame: {(rate[-1] > 0).mean() * 100:.1f}%")
