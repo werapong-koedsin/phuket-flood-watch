@@ -86,10 +86,21 @@ def fetch_frames():
     origin = (tx0 * 256, ty0 * 256)                  # global px ของมุมบนซ้าย mosaic
     return np.stack(frames), times, origin
 
+MAX_DBZ = 70.0                # เกินนี้ไม่ใช่ฝนจริง (มัก R=127/255 = nodata/ขอบ coverage) → ทิ้ง
+
 def decode_to_rate(raw):
-    """uint8 (R channel) → อัตราฝน มม./ชม. ; snow bit ถูกตัดทิ้ง (เขตร้อน)"""
-    dbz = (raw.astype(np.int16) & 127) - 32
-    dbz = dbz.astype(np.float32)
+    """uint8 (R channel) → อัตราฝน มม./ชม.
+    - snow flag (bit 128): ในเขตร้อนถือเป็น artifact → ทิ้งเป็น 0
+    - dBZ > MAX_DBZ: การเข้ารหัส nodata/นอก coverage → ทิ้งเป็น 0
+    """
+    snow = (raw & 128) > 0
+    dbz = ((raw.astype(np.int16) & 127) - 32).astype(np.float32)
+    invalid = snow | (dbz > MAX_DBZ)
+    n_inv = int(invalid.sum())
+    if n_inv:
+        print(f"  filtered {n_inv} invalid px ({n_inv / raw.size * 100:.3f}%) "
+              f"[snow-flag: {int(snow.sum())}, dbz>{MAX_DBZ:.0f}: {int((dbz > MAX_DBZ).sum())}]")
+    dbz[invalid] = -32.0
     dbz[dbz < MIN_DBZ] = -32.0
     z = 10.0 ** (dbz / 10.0)
     rate = (z / 200.0) ** (1.0 / 1.6)                # Marshall–Palmer
