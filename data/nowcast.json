@@ -1,0 +1,87 @@
+{
+ "generated_utc": "2026-07-02T11:57:50Z",
+ "latest_frame_utc": "2026-07-02T11:50:00Z",
+ "latest_frame_unix": 1782993000,
+ "steps_min": [
+  10,
+  20,
+  30,
+  40,
+  50,
+  60
+ ],
+ "method": "pySTEPS LK optical flow + semi-Lagrangian extrapolation",
+ "source": "RainViewer BW-dBZ tiles, Marshall-Palmer Z=200R^1.6",
+ "synthetic": false,
+ "districts": {
+  "Kathu": {
+   "rate_now_p95": 0.0,
+   "rate_now_mean": 0.0,
+   "series_p95": [
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0
+   ],
+   "series_mean": [
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0
+   ],
+   "rain60_p95": 0.0,
+   "rain60_mean": 0.0,
+   "peak_rate_60min": 0.0
+  },
+  "Thalang": {
+   "rate_now_p95": 0.0,
+   "rate_now_mean": 995.9,
+   "series_p95": [
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0
+   ],
+   "series_mean": [
+    995.9,
+    995.9,
+    995.9,
+    995.9,
+    995.9,
+    995.9
+   ],
+   "rain60_p95": 0.0,
+   "rain60_mean": 995.9,
+   "peak_rate_60min": 0.0
+  },
+  "Mueang Phuket": {
+   "rate_now_p95": 0.0,
+   "rate_now_mean": 0.0,
+   "series_p95": [
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0
+   ],
+   "series_mean": [
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0
+   ],
+   "rain60_p95": 0.0,
+   "rain60_mean": 0.0,
+   "peak_rate_60min": 0.0
+  }
+ }
+}
