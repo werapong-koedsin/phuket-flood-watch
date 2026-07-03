@@ -1,0 +1,271 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>ประวัติและปรับเกณฑ์ · Phuket Flash Flood Watch</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Sarabun:wght@300;400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+:root{
+  --bg:#0A1119; --panel:#0F1B28; --panel2:#122132; --line:#1E3247;
+  --text:#EAF2F8; --muted:#7E97AB; --teal:#46C8E0;
+  --ok:#3BC98A; --watch:#F2C94C; --warn:#F2994A; --crit:#EB5757;
+  --mono:'IBM Plex Mono',monospace; --sans:'Sarabun',system-ui,sans-serif;
+}
+*{margin:0;padding:0;box-sizing:border-box}
+body{background:var(--bg);color:var(--text);font-family:var(--sans);min-height:100vh}
+header{display:flex;align-items:center;gap:14px;padding:12px 20px;border-bottom:1px solid var(--line);background:linear-gradient(180deg,#0E1926,#0A1119);flex-wrap:wrap}
+h1{font-size:16px;font-weight:700}
+.sub{font-size:11px;color:var(--muted);letter-spacing:1.5px;text-transform:uppercase}
+.spacer{flex:1}
+.btn{background:var(--panel2);border:1px solid var(--line);color:var(--text);font-family:var(--sans);font-size:12.5px;padding:7px 13px;border-radius:8px;cursor:pointer;text-decoration:none}
+.btn:hover{border-color:var(--teal)}
+.btn.active{border-color:var(--teal);color:var(--teal)}
+main{max-width:1060px;margin:0 auto;padding:16px 20px 60px}
+
+/* threshold panel */
+.cfg{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:14px 18px;margin-bottom:18px}
+.cfg h2{font-size:13.5px;margin-bottom:4px}
+.cfg .hint{font-size:11.5px;color:var(--muted);margin-bottom:12px;line-height:1.6}
+.cfg-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(230px,1fr));gap:14px}
+.cfg-group{background:var(--panel2);border:1px solid var(--line);border-radius:9px;padding:10px 12px}
+.cfg-group b{font-size:11.5px;display:block;margin-bottom:7px;color:var(--teal)}
+.cfg-row{display:flex;align-items:center;gap:6px;margin:4px 0;font-size:11.5px;color:var(--muted)}
+.cfg-row label{flex:1}
+.cfg-row input[type=number]{width:62px;background:var(--bg);border:1px solid var(--line);border-radius:6px;color:var(--text);font-family:var(--mono);font-size:11.5px;padding:4px 6px;text-align:right}
+.cfg-actions{display:flex;gap:10px;align-items:center;margin-top:12px;flex-wrap:wrap}
+.chk{display:flex;align-items:center;gap:6px;font-size:12px;color:var(--muted)}
+
+/* district section */
+.dist{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:14px 18px;margin-bottom:16px}
+.dist-head{display:flex;align-items:baseline;gap:10px;flex-wrap:wrap}
+.dist-head h3{font-size:15px}
+.dist-head .en{font-size:11px;color:var(--muted)}
+.stats{margin-left:auto;font-family:var(--mono);font-size:10.5px;color:var(--muted)}
+.stats b{color:var(--text)}
+svg.chart{width:100%;height:170px;display:block;margin-top:8px}
+svg.strip{width:100%;height:16px;display:block;margin-top:2px}
+.axis-note{display:flex;gap:16px;font-size:10.5px;color:var(--muted);margin-top:6px;flex-wrap:wrap}
+.sw{display:inline-block;width:14px;height:3px;vertical-align:middle;margin-right:5px;border-radius:2px}
+.empty{text-align:center;color:var(--muted);padding:60px 20px;font-size:14px;line-height:2}
+@media(max-width:700px){ .stats{margin-left:0;width:100%} }
+</style>
+</head>
+<body>
+<header>
+  <div>
+    <h1>ประวัติตัวแปรเตือนภัย + ทดลองปรับเกณฑ์</h1>
+    <div class="sub">Phuket Flash Flood Watch · Calibration Lab</div>
+  </div>
+  <div class="spacer"></div>
+  <button class="btn range" data-h="24">24 ชม.</button>
+  <button class="btn range active" data-h="72">3 วัน</button>
+  <button class="btn range" data-h="168">7 วัน</button>
+  <button class="btn range" data-h="720">30 วัน</button>
+  <a class="btn" href="./index.html">← กลับ dashboard</a>
+</header>
+
+<main>
+  <div class="cfg">
+    <h2>เกณฑ์เตือน (ทดลองปรับได้ — กราฟแถบระดับด้านล่างคำนวณใหม่ทันที)</h2>
+    <div class="hint">ใช้หน้านี้ตอบคำถาม "ถ้าเกณฑ์เป็นค่านี้ ระบบจะเตือนช่วงไหนบ้างในอดีต" แล้วเทียบกับเหตุการณ์น้ำท่วมจริงที่คุณจดไว้ ค่าที่ปรับที่นี่<b>ไม่มีผลกับระบบจริง</b> — เมื่อได้ค่าที่พอใจ นำไปแก้ใน GAS (THRESH_2H, ANTECEDENT_SCALE) และ index.html</div>
+    <div class="cfg-grid">
+      <div class="cfg-group"><b>NWP ฝนคาด 2 ชม. (มม.)</b>
+        <div class="cfg-row"><label>เฝ้าระวัง ≥</label><input type="number" id="t2_0" value="10"></div>
+        <div class="cfg-row"><label>เตือนภัย ≥</label><input type="number" id="t2_1" value="25"></div>
+        <div class="cfg-row"><label>วิกฤต ≥</label><input type="number" id="t2_2" value="40"></div>
+        <div class="cfg-row"><label>ฝนหนักรายชม. → เตือนภัย ≥</label><input type="number" id="ix" value="35"></div>
+      </div>
+      <div class="cfg-group"><b>เรดาร์ nowcast 60 นาที (มม.)</b>
+        <div class="cfg-row"><label>เฝ้าระวัง ≥</label><input type="number" id="tr_0" value="7"></div>
+        <div class="cfg-row"><label>เตือนภัย ≥</label><input type="number" id="tr_1" value="15"></div>
+        <div class="cfg-row"><label>วิกฤต ≥</label><input type="number" id="tr_2" value="25"></div>
+        <div class="cfg-row"><label>พีค มม./ชม. (เฝ้า/เตือน/วิกฤต)</label>
+          <input type="number" id="tp_0" value="20" style="width:46px"><input type="number" id="tp_1" value="35" style="width:46px"><input type="number" id="tp_2" value="50" style="width:46px"></div>
+      </div>
+      <div class="cfg-group"><b>ฝนสะสม 24 ชม. → ปรับเกณฑ์</b>
+        <div class="cfg-row"><label>≥ <input type="number" id="ab_0" value="25" style="width:52px"> มม. → เกณฑ์ ×</label><input type="number" id="am_0" value="0.9" step="0.05"></div>
+        <div class="cfg-row"><label>≥ <input type="number" id="ab_1" value="50" style="width:52px"> มม. → เกณฑ์ ×</label><input type="number" id="am_1" value="0.75" step="0.05"></div>
+        <div class="cfg-row"><label>≥ <input type="number" id="ab_2" value="90" style="width:52px"> มม. → เกณฑ์ ×</label><input type="number" id="am_2" value="0.6" step="0.05"></div>
+        <div class="cfg-row chk"><input type="checkbox" id="antOn" checked><label for="antOn">เปิดใช้การปรับเกณฑ์ตามฝนสะสม</label></div>
+      </div>
+    </div>
+    <div class="cfg-actions">
+      <button class="btn" id="resetBtn">คืนค่าตั้งต้น</button>
+      <span class="hint" style="margin:0" id="lastRec">—</span>
+    </div>
+  </div>
+
+  <div id="charts"></div>
+  <div class="axis-note" style="padding:0 4px">
+    <span><span class="sw" style="background:var(--teal)"></span>NWP ฝนคาด 2 ชม. (แกนซ้าย)</span>
+    <span><span class="sw" style="background:var(--warn)"></span>เรดาร์ 60 นาที (แกนซ้าย)</span>
+    <span><span class="sw" style="background:var(--watch);height:2px;border-bottom:2px dashed var(--watch);background:none"></span>ฝนสะสม 24 ชม. (แกนขวา)</span>
+    <span>แถบล่าง = ระดับเตือนที่คำนวณจากเกณฑ์ข้างบน</span>
+  </div>
+</main>
+
+<script>
+const DISTRICTS = [
+  ['Kathu', 'อ.กะทู้'],
+  ['Thalang', 'อ.ถลาง'],
+  ['Mueang Phuket', 'อ.เมืองภูเก็ต'],
+];
+const LV_COLOR = ['#3BC98A', '#F2C94C', '#F2994A', '#EB5757'];
+const LV_NAME = ['ปกติ', 'เฝ้าระวัง', 'เตือนภัย', 'วิกฤต'];
+const DEFAULTS = {t2_0:10,t2_1:25,t2_2:40,ix:35,tr_0:7,tr_1:15,tr_2:25,tp_0:20,tp_1:35,tp_2:50,ab_0:25,ab_1:50,ab_2:90,am_0:0.9,am_1:0.75,am_2:0.6};
+
+let records = [];
+let rangeH = 72;
+
+function cfg(){
+  const g = id => parseFloat(document.getElementById(id).value) || 0;
+  return {
+    t2:[g('t2_0'),g('t2_1'),g('t2_2')], ix:g('ix'),
+    tr:[g('tr_0'),g('tr_1'),g('tr_2')], tp:[g('tp_0'),g('tp_1'),g('tp_2')],
+    ab:[g('ab_0'),g('ab_1'),g('ab_2')], am:[g('am_0'),g('am_1'),g('am_2')],
+    antOn: document.getElementById('antOn').checked,
+  };
+}
+
+function antScale(a, c){
+  if (a == null || !c.antOn) return 1;
+  if (a >= c.ab[2]) return c.am[2];
+  if (a >= c.ab[1]) return c.am[1];
+  if (a >= c.ab[0]) return c.am[0];
+  return 1;
+}
+
+function calcLevel(v, c){
+  if (!v) return 0;
+  const sc = antScale(v.a, c);
+  const f2 = v.f2 ?? 0, fx = v.fx ?? 0, r60 = v.r60 ?? 0, rp = v.rp ?? 0;
+  let lv = 0;
+  for (let i = 2; i >= 0; i--) if (f2 >= c.t2[i] * sc) { lv = i + 1; break; }
+  if (fx >= c.ix * sc && lv < 2) lv = 2;
+  let rl = 0;
+  if (r60 >= c.tr[2] * sc || rp >= c.tp[2] * sc) rl = 3;
+  else if (r60 >= c.tr[1] * sc || rp >= c.tp[1] * sc) rl = 2;
+  else if (r60 >= c.tr[0] * sc || rp >= c.tp[0] * sc) rl = 1;
+  return Math.max(lv, rl);
+}
+
+async function load(){
+  try{
+    const r = await fetch('./data/history.jsonl?t=' + Date.now());
+    if (!r.ok) throw new Error();
+    const text = await r.text();
+    records = text.split('\n').filter(Boolean).map(l => { try { return JSON.parse(l); } catch(e){ return null; } })
+      .filter(Boolean).sort((a,b) => a.t < b.t ? -1 : 1);
+  }catch(e){ records = []; }
+  render();
+}
+
+function render(){
+  const wrap = document.getElementById('charts');
+  if (!records.length){
+    wrap.innerHTML = '<div class="empty">ยังไม่มีข้อมูลประวัติ<br>ตัวเก็บข้อมูล (logger) เพิ่งเริ่มทำงาน — จุดข้อมูลจะเพิ่มทุก 15 นาที กลับมาดูใหม่ในอีกไม่กี่ชั่วโมง</div>';
+    document.getElementById('lastRec').textContent = '';
+    return;
+  }
+  const c = cfg();
+  const cut = new Date(Date.now() - rangeH * 3600000).toISOString();
+  let recs = records.filter(r => r.t >= cut);
+  if (recs.length < 2) recs = records.slice(-2);
+  // downsample ถ้าจุดเยอะเกิน (30 วัน ≈ 2880 จุด)
+  const MAXPTS = 700;
+  if (recs.length > MAXPTS){
+    const step = Math.ceil(recs.length / MAXPTS);
+    recs = recs.filter((_, i) => i % step === 0);
+  }
+  document.getElementById('lastRec').textContent =
+    'ข้อมูล ' + records.length + ' จุด · ล่าสุด ' + new Date(records[records.length-1].t)
+      .toLocaleString('th-TH', {day:'numeric', month:'short', hour:'2-digit', minute:'2-digit'}) + ' น.';
+
+  wrap.innerHTML = DISTRICTS.map(([key, th]) => districtSection(key, th, recs, c)).join('');
+}
+
+function districtSection(key, th, recs, c){
+  const W = 800, H = 170, P = {l:34, r:38, t:8, b:16};
+  const iw = W - P.l - P.r, ih = H - P.t - P.b;
+  const vals = recs.map(r => r.d[key] || {});
+  const levels = vals.map(v => calcLevel(v, c));
+
+  const maxL = Math.max(5, ...vals.map(v => Math.max(v.f2 ?? 0, v.r60 ?? 0)));
+  const maxR = Math.max(10, ...vals.map(v => v.a ?? 0));
+  const x = i => P.l + i / Math.max(1, recs.length - 1) * iw;
+  const yL = v => P.t + ih - (v / maxL) * ih;
+  const yR = v => P.t + ih - (v / maxR) * ih;
+
+  const barW = Math.max(1, iw / recs.length * 0.6);
+  let bars = '', lineR60 = [], lineA = [];
+  vals.forEach((v, i) => {
+    if (v.f2 != null && v.f2 > 0)
+      bars += `<rect x="${(x(i)-barW/2).toFixed(1)}" y="${yL(v.f2).toFixed(1)}" width="${barW.toFixed(1)}" height="${(P.t+ih-yL(v.f2)).toFixed(1)}" fill="var(--teal)" opacity="0.75"/>`;
+    if (v.r60 != null) lineR60.push(`${x(i).toFixed(1)},${yL(v.r60).toFixed(1)}`);
+    if (v.a != null) lineA.push(`${x(i).toFixed(1)},${yR(v.a).toFixed(1)}`);
+  });
+
+  // เส้นกริดแกนซ้าย 3 เส้น + ตัวเลข
+  let grid = '';
+  [0.5, 1].forEach(f => {
+    const gy = yL(maxL * f).toFixed(1);
+    grid += `<line x1="${P.l}" y1="${gy}" x2="${W-P.r}" y2="${gy}" stroke="var(--line)" stroke-width="0.6"/>` +
+            `<text x="${P.l-4}" y="${gy}" fill="var(--muted)" font-size="8.5" text-anchor="end" dominant-baseline="middle">${(maxL*f).toFixed(0)}</text>` +
+            `<text x="${W-P.r+4}" y="${gy}" fill="var(--watch)" font-size="8.5" dominant-baseline="middle" opacity="0.8">${(maxR*f).toFixed(0)}</text>`;
+  });
+
+  // ป้ายเวลา 4 จุด
+  let ticks = '';
+  [0, 0.33, 0.66, 1].forEach(f => {
+    const i = Math.round(f * (recs.length - 1));
+    const t = new Date(recs[i].t);
+    ticks += `<text x="${x(i).toFixed(1)}" y="${H-3}" fill="var(--muted)" font-size="8.5" text-anchor="middle">${t.toLocaleString('th-TH',{day:'numeric',month:'short',hour:'2-digit',minute:'2-digit'})}</text>`;
+  });
+
+  // แถบระดับ
+  const sw = iw / recs.length;
+  let strip = '';
+  levels.forEach((lv, i) => {
+    strip += `<rect x="${(P.l + i*sw).toFixed(1)}" y="0" width="${(sw+0.5).toFixed(1)}" height="16" fill="${LV_COLOR[lv]}" opacity="${lv ? 0.9 : 0.22}"><title>${new Date(recs[i].t).toLocaleString('th-TH')} · ${LV_NAME[lv]}</title></rect>`;
+  });
+
+  // สถิติ
+  const nWarn = levels.filter(l => l >= 2).length;
+  const maxF2 = Math.max(0, ...vals.map(v => v.f2 ?? 0));
+  const maxA = Math.max(0, ...vals.map(v => v.a ?? 0));
+  const pct = (nWarn / levels.length * 100).toFixed(0);
+
+  return `<div class="dist">
+    <div class="dist-head"><h3>${th}</h3><span class="en">${key}</span>
+      <span class="stats">≥เตือนภัย <b>${nWarn}</b> จุด (${pct}%) · NWP 2ชม. สูงสุด <b>${maxF2.toFixed(1)}</b> มม. · ฝนสะสมสูงสุด <b>${maxA.toFixed(1)}</b> มม.</span></div>
+    <svg class="chart" viewBox="0 0 ${W} ${H}" preserveAspectRatio="none">
+      ${grid}${bars}
+      ${lineR60.length > 1 ? `<polyline points="${lineR60.join(' ')}" fill="none" stroke="var(--warn)" stroke-width="1.4"/>` : ''}
+      ${lineA.length > 1 ? `<polyline points="${lineA.join(' ')}" fill="none" stroke="var(--watch)" stroke-width="1.3" stroke-dasharray="5 3" opacity="0.9"/>` : ''}
+      ${ticks}
+    </svg>
+    <svg class="strip" viewBox="0 0 ${W} 16" preserveAspectRatio="none">${strip}</svg>
+  </div>`;
+}
+
+/* controls */
+document.querySelectorAll('.range').forEach(b => b.addEventListener('click', () => {
+  document.querySelectorAll('.range').forEach(x => x.classList.remove('active'));
+  b.classList.add('active');
+  rangeH = +b.dataset.h;
+  render();
+}));
+document.querySelectorAll('.cfg input').forEach(i => i.addEventListener('input', render));
+document.getElementById('resetBtn').addEventListener('click', () => {
+  for (const k in DEFAULTS) document.getElementById(k).value = DEFAULTS[k];
+  document.getElementById('antOn').checked = true;
+  render();
+});
+
+load();
+setInterval(load, 15 * 60 * 1000);
+</script>
+</body>
+</html>
