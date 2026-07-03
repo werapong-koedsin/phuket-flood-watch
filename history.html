@@ -84,6 +84,11 @@ svg.strip{width:100%;height:16px;display:block;margin-top:2px}
         <div class="cfg-row"><label>พีค มม./ชม. (เฝ้า/เตือน/วิกฤต)</label>
           <input type="number" id="tp_0" value="20" style="width:46px"><input type="number" id="tp_1" value="35" style="width:46px"><input type="number" id="tp_2" value="50" style="width:46px"></div>
       </div>
+      <div class="cfg-group"><b>ฝนจริงรายชั่วโมง (มม./ชม.)</b>
+        <div class="cfg-row"><label>เฝ้าระวัง ≥</label><input type="number" id="tl_0" value="15"></div>
+        <div class="cfg-row"><label>เตือนภัย ≥</label><input type="number" id="tl_1" value="25"></div>
+        <div class="cfg-row"><label>วิกฤต ≥</label><input type="number" id="tl_2" value="40"></div>
+      </div>
       <div class="cfg-group"><b>ฝนสะสม 24 ชม. → ปรับเกณฑ์</b>
         <div class="cfg-row"><label>≥ <input type="number" id="ab_0" value="25" style="width:52px"> มม. → เกณฑ์ ×</label><input type="number" id="am_0" value="0.9" step="0.05"></div>
         <div class="cfg-row"><label>≥ <input type="number" id="ab_1" value="50" style="width:52px"> มม. → เกณฑ์ ×</label><input type="number" id="am_1" value="0.75" step="0.05"></div>
@@ -101,6 +106,7 @@ svg.strip{width:100%;height:16px;display:block;margin-top:2px}
   <div class="axis-note" style="padding:0 4px">
     <span><span class="sw" style="background:var(--teal)"></span>NWP ฝนคาด 2 ชม. (แกนซ้าย)</span>
     <span><span class="sw" style="background:var(--warn)"></span>เรดาร์ 60 นาที (แกนซ้าย)</span>
+    <span><span class="sw" style="background:#B48CFF"></span>ฝนจริงรายชั่วโมง HII (แกนซ้าย)</span>
     <span><span class="sw" style="background:var(--watch);height:2px;border-bottom:2px dashed var(--watch);background:none"></span>ฝนสะสม 24 ชม. (แกนขวา)</span>
     <span>แถบล่าง = ระดับเตือนที่คำนวณจากเกณฑ์ข้างบน</span>
     <span style="color:#5E7488">หมายเหตุ: ข้อมูลย้อนหลัง (backfill จาก Open-Meteo) ใช้ "ฝนจริง 2 ชม.ถัดไป" แทนค่าพยากรณ์ = สถานการณ์พยากรณ์สมบูรณ์แบบ และไม่มีข้อมูลเรดาร์</span>
@@ -115,7 +121,7 @@ const DISTRICTS = [
 ];
 const LV_COLOR = ['#3BC98A', '#F2C94C', '#F2994A', '#EB5757'];
 const LV_NAME = ['ปกติ', 'เฝ้าระวัง', 'เตือนภัย', 'วิกฤต'];
-const DEFAULTS = {t2_0:10,t2_1:25,t2_2:40,ix:35,tr_0:7,tr_1:15,tr_2:25,tp_0:20,tp_1:35,tp_2:50,ab_0:25,ab_1:50,ab_2:90,am_0:0.9,am_1:0.75,am_2:0.6};
+const DEFAULTS = {t2_0:10,t2_1:25,t2_2:40,ix:35,tr_0:7,tr_1:15,tr_2:25,tp_0:20,tp_1:35,tp_2:50,ab_0:25,ab_1:50,ab_2:90,am_0:0.9,am_1:0.75,am_2:0.6,tl_0:15,tl_1:25,tl_2:40};
 
 let records = [];
 let rangeH = 72;
@@ -125,6 +131,7 @@ function cfg(){
   return {
     t2:[g('t2_0'),g('t2_1'),g('t2_2')], ix:g('ix'),
     tr:[g('tr_0'),g('tr_1'),g('tr_2')], tp:[g('tp_0'),g('tp_1'),g('tp_2')],
+    tl:[g('tl_0'),g('tl_1'),g('tl_2')],
     ab:[g('ab_0'),g('ab_1'),g('ab_2')], am:[g('am_0'),g('am_1'),g('am_2')],
     antOn: document.getElementById('antOn').checked,
   };
@@ -149,7 +156,14 @@ function calcLevel(v, c){
   if (r60 >= c.tr[2] * sc || rp >= c.tp[2] * sc) rl = 3;
   else if (r60 >= c.tr[1] * sc || rp >= c.tp[1] * sc) rl = 2;
   else if (r60 >= c.tr[0] * sc || rp >= c.tp[0] * sc) rl = 1;
-  return Math.max(lv, rl);
+  let ll = 0;
+  const r1 = v.r1;
+  if (r1 != null){
+    if (r1 >= c.tl[2] * sc) ll = 3;
+    else if (r1 >= c.tl[1] * sc) ll = 2;
+    else if (r1 >= c.tl[0] * sc) ll = 1;
+  }
+  return Math.max(lv, rl, ll);
 }
 
 async function load(){
@@ -193,15 +207,16 @@ function districtSection(key, th, recs, c){
   const vals = recs.map(r => r.d[key] || {});
   const levels = vals.map(v => calcLevel(v, c));
 
-  const maxL = Math.max(5, ...vals.map(v => Math.max(v.f2 ?? 0, v.r60 ?? 0)));
+  const maxL = Math.max(5, ...vals.map(v => Math.max(v.f2 ?? 0, v.r60 ?? 0, v.r1 ?? 0)));
   const maxR = Math.max(10, ...vals.map(v => v.a ?? 0));
   const x = i => P.l + i / Math.max(1, recs.length - 1) * iw;
   const yL = v => P.t + ih - (v / maxL) * ih;
   const yR = v => P.t + ih - (v / maxR) * ih;
 
   const barW = Math.min(16, Math.max(1, iw / recs.length * 0.6));
-  let bars = '', lineR60 = [], lineA = [];
+  let bars = '', lineR60 = [], lineA = [], lineR1 = [];
   vals.forEach((v, i) => {
+    if (v.r1 != null) lineR1.push(`${x(i).toFixed(1)},${yL(v.r1).toFixed(1)}`);
     if (v.f2 != null && v.f2 > 0)
       bars += `<rect x="${(x(i)-barW/2).toFixed(1)}" y="${yL(v.f2).toFixed(1)}" width="${barW.toFixed(1)}" height="${(P.t+ih-yL(v.f2)).toFixed(1)}" fill="var(--teal)" opacity="0.75"/>`;
     if (v.r60 != null) lineR60.push(`${x(i).toFixed(1)},${yL(v.r60).toFixed(1)}`);
@@ -246,6 +261,7 @@ function districtSection(key, th, recs, c){
     <svg class="chart" viewBox="0 0 ${W} ${H}" preserveAspectRatio="none">
       ${grid}${bars}
       ${lineR60.length > 1 ? `<polyline points="${lineR60.join(' ')}" fill="none" stroke="var(--warn)" stroke-width="1.4"/>` : ''}
+      ${lineR1.length > 1 ? `<polyline points="${lineR1.join(' ')}" fill="none" stroke="#B48CFF" stroke-width="1.3"/>` : ''}
       ${lineA.length > 1 ? `<polyline points="${lineA.join(' ')}" fill="none" stroke="var(--watch)" stroke-width="1.3" stroke-dasharray="5 3" opacity="0.9"/>` : ''}
       ${ticks}
     </svg>

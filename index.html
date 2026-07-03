@@ -218,7 +218,7 @@ aside{border-left:1px solid var(--line);background:var(--panel);overflow-y:auto;
       </div>
       <div class="note">
         เรดาร์: RainViewer (อัปเดตทุก ~5 นาที) · พยากรณ์ฝนรายชั่วโมง: TMD NWP API ความละเอียด 2 กม. ·
-        ขอบเขตอำเภอ: OpenGISData-Thailand · Nowcast เรดาร์: pySTEPS 0–60 นาที (GitHub Actions ทุก 15 นาที) · ฝนสะสม 24 ชม.: สถานีโทรมาตร HII — ดินอิ่มน้ำจะลดเกณฑ์เตือนอัตโนมัติ (x0.9/x0.75/x0.6 ที่ 25/50/90 มม.) ระดับเตือน = ค่าสูงสุดระหว่าง NWP กับเรดาร์ · เกณฑ์เตือนเป็นค่าตั้งต้นสำหรับ prototype ควรปรับเทียบ (calibrate)
+        ขอบเขตอำเภอ: OpenGISData-Thailand · Nowcast เรดาร์: pySTEPS 0–60 นาที (GitHub Actions ทุก 15 นาที) · ฝนสะสม 24 ชม.: สถานีโทรมาตร HII — ดินอิ่มน้ำจะลดเกณฑ์เตือนอัตโนมัติ (x0.9/x0.75/x0.6 ที่ 25/50/90 มม.) · ฝนจริงรายชั่วโมง ≥15/25/40 มม. ยกระดับทันที ระดับเตือน = ค่าสูงสุดระหว่าง NWP กับเรดาร์ · เกณฑ์เตือนเป็นค่าตั้งต้นสำหรับ prototype ควรปรับเทียบ (calibrate)
         กับเหตุการณ์น้ำท่วมจริงและฝนสะสมย้อนหลังก่อนใช้งานปฏิบัติการ
       </div>
     </div>
@@ -278,7 +278,7 @@ aside{border-left:1px solid var(--line);background:var(--panel);overflow-y:auto;
 <script>
 /* ================= CONFIG ================= */
 // ★ วาง URL ของ GAS Web App (ลงท้าย /exec) ตรงนี้บรรทัดเดียว — ห้ามใส่ TMD token ในไฟล์นี้ (repo เป็น public)
-const DEFAULT_PROXY = "https://script.google.com/macros/s/AKfycbxkyoMvtiVayUhZ1xDZpf1_622ZGTskfZZdcLU3gOnC5ilN9_JVINFDmkMfXfxyZ067/exec";
+const DEFAULT_PROXY = "PASTE_YOUR_GAS_EXEC_URL_HERE";
 
 /* จุดตัวแทนต่ออำเภอ (lat, lon) — ใช้ค่าสูงสุดรายชั่วโมงจากทุกจุด เพื่อไม่ให้ grid 2 กม. หลุด cell ฝน
    กะทู้: centroid, ป่าตอง, ตัวเมืองกะทู้ | ถลาง: centroid, เชิงทะเล, สนามบิน/สาคู | เมือง: ตัวเมือง, ฉลอง, ราไวย์ */
@@ -518,10 +518,32 @@ function recomputeLevels(){
     d.radar = nc || null;
     d.radarLevel = nc ? radarLevelOf(nc, d.thScale) : 0;
     d.wlLevel = (key === 'Mueang Phuket' && state.wlLevel) ? state.wlLevel : 0;
-    d.level = Math.max(d.nwpLevel, d.radarLevel, d.wlLevel);
+    d.rain1 = rg ? rg.rain1_max : null;
+    d.liveLevel = (rg && rainFresh(rg.dt)) ? liveRainLevel(rg.rain1_max, d.thScale) : 0;
+    d.level = Math.max(d.nwpLevel, d.radarLevel, d.wlLevel, d.liveLevel);
+    d.drv = '';
+    if (d.level > d.nwpLevel){
+      if (d.wlLevel === d.level) d.drv = 'ระดับน้ำ';
+      else if (d.liveLevel === d.level) d.drv = 'ฝนจริง';
+      else if (d.radarLevel === d.level) d.drv = 'เรดาร์';
+    }
   }
   paintDistricts();
   renderCards();
+}
+
+const LIVE_RAIN_TH = [15, 25, 40];   // ฝนจริงรายชั่วโมง มม./ชม.
+function liveRainLevel(r1, scale){
+  if (r1 == null) return 0;
+  if (r1 >= LIVE_RAIN_TH[2] * scale) return 3;
+  if (r1 >= LIVE_RAIN_TH[1] * scale) return 2;
+  if (r1 >= LIVE_RAIN_TH[0] * scale) return 1;
+  return 0;
+}
+function rainFresh(dt){
+  if (!dt) return false;
+  const t = new Date(dt.replace(' ', 'T') + ':00+07:00');
+  return isFinite(t.getTime()) && (Date.now() - t.getTime()) / 3600000 <= 2.5;
 }
 
 /* ---------- ฝนสะสม 24 ชม. จากสถานีโทรมาตร HII ---------- */
@@ -626,11 +648,11 @@ function renderCards(){
       <div class="card-top">
         <span class="th">อ.${d.feature.properties.amp_th}</span>
         <span class="en">${d.feature.properties.amp_en}</span>
-        <span class="lvl ${L_.cls}">${L_.name}${d.wlLevel && d.wlLevel >= d.level ? ' · ระดับน้ำ' : (d.radarLevel > (d.nwpLevel||0) && d.radarLevel >= d.level ? ' · เรดาร์' : '')}</span>
+        <span class="lvl ${L_.cls}">${L_.name}${d.drv ? ' · ' + d.drv : ''}</span>
       </div>
       <div class="card-mid">
         <div class="big">${d.rain2h.toFixed(1)}<small>มม./2ชม.</small></div>
-        <div class="kv">สูงสุดรายชม.(NWP): <b>${d.maxHr.toFixed(1)} มม.</b><br>เรดาร์ 60 นาที: <b>${d.radar ? d.radar.rain60_p95.toFixed(1) + ' มม.' : (state.nowcast && state.nowcast._stale ? 'หมดอายุ' : '—')}</b><br>ฝนสะสม 24 ชม.: <b>${d.rain24 != null ? d.rain24.toFixed(1) + ' มม.' : '—'}</b>${d.thScale < 1 ? ' <span style="color:var(--watch)">เกณฑ์ x' + d.thScale + '</span>' : ''}</div>
+        <div class="kv">สูงสุดรายชม.(NWP): <b>${d.maxHr.toFixed(1)} มม.</b><br>เรดาร์ 60 นาที: <b>${d.radar ? d.radar.rain60_p95.toFixed(1) + ' มม.' : (state.nowcast && state.nowcast._stale ? 'หมดอายุ' : '—')}</b><br>ฝนสะสม 24 ชม.: <b>${d.rain24 != null ? d.rain24.toFixed(1) + ' มม.' : '—'}</b> · ชม.ล่าสุด <b>${d.rain1 != null ? d.rain1.toFixed(1) : '—'}</b>${d.thScale < 1 ? ' <span style="color:var(--watch)">เกณฑ์ x' + d.thScale + '</span>' : ''}</div>
       </div>
       <div class="strip"><div class="win" style="width:${winW}"></div>${bars}</div>`;
     el.addEventListener('click', () => selectDistrict(key));
