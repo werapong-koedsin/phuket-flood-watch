@@ -1,0 +1,41 @@
+name: backfill-history
+
+on:
+  workflow_dispatch:   # กดรันเองเท่านั้น (ครั้งเดียวพอ — รันซ้ำได้ ไม่ทับข้อมูลจริง)
+
+permissions:
+  contents: write
+
+concurrency:
+  group: logger        # ใช้กลุ่มเดียวกับ logger กันเขียน history.jsonl ชนกัน
+  cancel-in-progress: false
+
+jobs:
+  backfill:
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install requests
+        run: pip install requests
+
+      - name: Backfill past week
+        run: python logger/backfill.py
+
+      - name: Commit result
+        run: |
+          git config user.name "backfill-bot"
+          git config user.email "backfill-bot@users.noreply.github.com"
+          git add data/history.jsonl
+          if git diff --cached --quiet; then
+            echo "no changes"
+          else
+            git commit -m "backfill history $(date -u +'%Y-%m-%dT%H:%M:%SZ')"
+            git pull --rebase origin ${GITHUB_REF_NAME}
+            git push
+          fi
