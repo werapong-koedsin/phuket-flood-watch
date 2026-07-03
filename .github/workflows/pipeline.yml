@@ -1,0 +1,51 @@
+name: pipeline
+
+on:
+  workflow_dispatch:        # ตัวสั่งหลัก: GAS ยิงทุก 15 นาที (เที่ยงตรงกว่า cron ของ GitHub)
+  schedule:
+    - cron: '9,39 * * * *'  # สำรองเผื่อ GAS ล่ม — นาทีเลขคี่ที่คนแย่งน้อย
+
+permissions:
+  contents: write
+
+concurrency:
+  group: pipeline
+  cancel-in-progress: false
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+          cache-dependency-path: nowcast/requirements.txt
+
+      - name: Install dependencies
+        run: pip install -r nowcast/requirements.txt
+
+      - name: Run radar nowcast
+        run: python nowcast/nowcast.py
+
+      - name: Log history snapshot
+        run: python logger/log_snapshot.py
+
+      - name: Commit results
+        run: |
+          git config user.name "pipeline-bot"
+          git config user.email "pipeline-bot@users.noreply.github.com"
+          git add data/nowcast.json data/history.jsonl
+          if git diff --cached --quiet; then
+            echo "no changes"
+          else
+            git commit -m "pipeline $(date -u +'%Y-%m-%dT%H:%M:%SZ')"
+            for i in 1 2 3 4 5; do
+              git pull --rebase origin ${GITHUB_REF_NAME} && git push && break
+              echo "push retry $i"
+              sleep $((RANDOM % 15 + 5))
+            done
+          fi
