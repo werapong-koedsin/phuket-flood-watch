@@ -1,0 +1,43 @@
+name: history-logger
+
+on:
+  schedule:
+    - cron: '7,22,37,52 * * * *'   # เหลื่อมจาก workflow อื่นเล็กน้อย ให้ nowcast.json อัปเดตก่อน
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: logger
+  cancel-in-progress: false
+
+jobs:
+  log:
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install requests
+        run: pip install requests
+
+      - name: Log snapshot
+        run: python logger/log_snapshot.py
+
+      - name: Commit result
+        run: |
+          git config user.name "logger-bot"
+          git config user.email "logger-bot@users.noreply.github.com"
+          git add data/history.jsonl
+          if git diff --cached --quiet; then
+            echo "no changes"
+          else
+            git commit -m "history $(date -u +'%Y-%m-%dT%H:%M:%SZ')"
+            git pull --rebase origin ${GITHUB_REF_NAME}
+            git push
+          fi
