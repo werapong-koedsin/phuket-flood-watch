@@ -198,7 +198,7 @@ function districtSection(key, th, recs, c){
   const yL = v => P.t + ih - (v / maxL) * ih;
   const yR = v => P.t + ih - (v / maxR) * ih;
 
-  const barW = Math.max(1, iw / recs.length * 0.6);
+  const barW = Math.min(16, Math.max(1, iw / recs.length * 0.6));
   let bars = '', lineR60 = [], lineA = [];
   vals.forEach((v, i) => {
     if (v.f2 != null && v.f2 > 0)
@@ -216,10 +216,12 @@ function districtSection(key, th, recs, c){
             `<text x="${W-P.r+4}" y="${gy}" fill="var(--watch)" font-size="8.5" dominant-baseline="middle" opacity="0.8">${(maxR*f).toFixed(0)}</text>`;
   });
 
-  // ป้ายเวลา 4 จุด
-  let ticks = '';
+  // ป้ายเวลา 4 จุด (ไม่ซ้ำ index เมื่อข้อมูลยังน้อย)
+  let ticks = '', seen = {};
   [0, 0.33, 0.66, 1].forEach(f => {
     const i = Math.round(f * (recs.length - 1));
+    if (seen[i]) return;
+    seen[i] = true;
     const t = new Date(recs[i].t);
     ticks += `<text x="${x(i).toFixed(1)}" y="${H-3}" fill="var(--muted)" font-size="8.5" text-anchor="middle">${t.toLocaleString('th-TH',{day:'numeric',month:'short',hour:'2-digit',minute:'2-digit'})}</text>`;
   });
