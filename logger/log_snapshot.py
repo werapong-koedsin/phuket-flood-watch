@@ -17,7 +17,7 @@ from pathlib import Path
 
 import requests
 
-PROXY_URL = "PASTE_YOUR_GAS_EXEC_URL_HERE"   # ★ URL GAS Web App (ลงท้าย /exec)
+PROXY_URL = "https://script.google.com/macros/s/AKfycbxkyoMvtiVayUhZ1xDZpf1_622ZGTskfZZdcLU3gOnC5ilN9_JVINFDmkMfXfxyZ067/exec"   # ★ URL GAS Web App (ลงท้าย /exec)
 KEEP_DAYS = 30                                # เก็บประวัติย้อนหลังกี่วัน (ที่ 15 นาที/จุด ≈ 96 จุด/วัน)
 
 ROOT = Path(__file__).resolve().parent.parent
