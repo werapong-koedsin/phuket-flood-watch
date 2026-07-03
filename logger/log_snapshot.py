@@ -17,7 +17,7 @@ from pathlib import Path
 
 import requests
 
-PROXY_URL = "https://script.google.com/macros/s/AKfycbxkyoMvtiVayUhZ1xDZpf1_622ZGTskfZZdcLU3gOnC5ilN9_JVINFDmkMfXfxyZ067/exec"   # ★ URL GAS Web App (ลงท้าย /exec)
+PROXY_URL = "PASTE_YOUR_GAS_EXEC_URL_HERE"   # ★ URL GAS Web App (ลงท้าย /exec)
 KEEP_DAYS = 30                                # เก็บประวัติย้อนหลังกี่วัน (ที่ 15 นาที/จุด ≈ 96 จุด/วัน)
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -38,13 +38,15 @@ def get_json(url, timeout=60):
 
 
 def fetch_rain24():
-    """ฝนสะสม 24 ชม. รายอำเภอจาก GAS ?src=rain → {district: rain24_max}"""
+    """ฝนรายอำเภอจาก GAS ?src=rain → ({district: rain24_max}, {district: rain1_max})"""
     try:
         j = get_json(f"{PROXY_URL}?src=rain&t={int(datetime.now().timestamp())}")
-        return {k: v.get("rain24_max") for k, v in j.get("districts", {}).items()}
+        d = j.get("districts", {})
+        return ({k: v.get("rain24_max") for k, v in d.items()},
+                {k: v.get("rain1_max") for k, v in d.items()})
     except Exception as e:
         print(f"rain24 skip: {e}", file=sys.stderr)
-        return {}
+        return {}, {}
 
 
 def fetch_nwp():
@@ -84,7 +86,7 @@ def main():
     if PROXY_URL.startswith("PASTE_"):
         raise SystemExit("ยังไม่ได้ตั้งค่า PROXY_URL ใน logger/log_snapshot.py")
 
-    rain24 = fetch_rain24()
+    rain24, rain1 = fetch_rain24()
     nwp = fetch_nwp()
     radar = read_radar()
 
@@ -94,6 +96,7 @@ def main():
         r60, rp = radar.get(name, (None, None))
         rec["d"][name] = {
             "a": rain24.get(name),   # ฝนสะสม 24 ชม. (HII)
+            "r1": rain1.get(name),   # ฝนจริงชั่วโมงล่าสุด (HII)
             "f2": f2,                # NWP ฝนรวม 2 ชม.ข้างหน้า
             "fx": fx,                # NWP สูงสุดรายชั่วโมง (ใน 2 ชม.)
             "r60": r60,              # เรดาร์ ฝนสะสมคาด 60 นาที (p95)
