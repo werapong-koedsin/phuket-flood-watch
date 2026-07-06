@@ -54,17 +54,21 @@ def fetch_nwp():
     → {district: (rain2h, max_hr, source)} แบบ max จาก 3 จุด"""
     out = {}
     for name, pts in DISTRICTS.items():
-        series, srcs = [], set()
+        series, series_m, srcs = [], [], set()
         for lat, lon in pts:
             try:
                 j = get_json(f"{PROXY_URL}?src=nwp&lat={lat}&lon={lon}")
                 if j.get("error") or not j.get("series"):
                     print(f"nwp {name} {lat},{lon}: {j.get('error', 'empty')}", file=sys.stderr)
                     continue
-                vals = [float(x.get("rain") or 0) for x in j["series"][:2]]
+                fc = j["series"][:2]
+                vals = [float(x.get("rain") or 0) for x in fc]
                 if vals:
                     series.append(vals)
                     srcs.add(j.get("source", "?"))
+                    # ค่าเฉลี่ยข้ามโมเดล (มีเฉพาะแหล่ง openmeteo) — เก็บคู่ max ไว้เทียบเชิงประจักษ์
+                    if all(x.get("rain_mean") is not None for x in fc):
+                        series_m.append([float(x["rain_mean"]) for x in fc])
             except Exception as e:
                 print(f"nwp {name} {lat},{lon} skip: {e}", file=sys.stderr)
         if series:
@@ -72,7 +76,11 @@ def fetch_nwp():
             hourly_max = [max(s[i] for s in series) for i in range(n)]
             if hourly_max:
                 src = "om" if "openmeteo" in srcs else "tmd"
-                out[name] = (round(sum(hourly_max), 2), round(max(hourly_max), 2), src)
+                f2m = None
+                if series_m:   # spatial max เหมือนเดิม ต่างเฉพาะวิธีรวมข้ามโมเดล
+                    nm = min(len(s) for s in series_m)
+                    f2m = round(sum(max(s[i] for s in series_m) for i in range(nm)), 2)
+                out[name] = (round(sum(hourly_max), 2), round(max(hourly_max), 2), src, f2m)
     return out
 
 
@@ -100,7 +108,7 @@ def main():
 
     rec = {"t": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"), "d": {}}
     for name in DISTRICTS:
-        f2, fx, fs = nwp.get(name, (None, None, None))
+        f2, fx, fs, f2m = nwp.get(name, (None, None, None, None))
         r60, rp = radar.get(name, (None, None))
         rec["d"][name] = {
             "a": rain24.get(name),   # ฝนสะสม 24 ชม. (HII)
@@ -108,6 +116,7 @@ def main():
             "f2": f2,                # NWP ฝนรวม 2 ชม.ข้างหน้า
             "fx": fx,                # NWP สูงสุดรายชั่วโมง (ใน 2 ชม.)
             "fs": fs,                # แหล่ง NWP: tmd | om (Open-Meteo สำรอง)
+            "f2m": f2m,              # f2 แบบเฉลี่ยข้ามโมเดล (เฉพาะ om) — ไว้เทียบ max vs mean
             "r60": r60,              # เรดาร์ ฝนสะสมคาด 60 นาที (p95)
             "rp": rp,                # เรดาร์ อัตราฝนพีค (p95, มม./ชม.)
         }
