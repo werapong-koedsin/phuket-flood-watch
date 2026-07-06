@@ -213,6 +213,16 @@ aside{border-left:1px solid var(--line);background:var(--panel);overflow-y:auto;
       <div class="wl-upd" id="wlUpd">—</div>
     </div>
 
+    <div class="wlpanel lv0" id="tidePanel" style="display:none;border-left-color:var(--muted)">
+      <div class="wl-head">น้ำขึ้นน้ำลง · อ่าวภูเก็ต <span class="en">ข้อมูลประกอบ — ไม่ใช้คำนวณระดับเตือน</span></div>
+      <div class="wl-now">
+        <span class="big" id="tideNow">—</span><span class="wl-sub">ม.รทก. <b id="tideTrend"></b></span>
+        <span class="wl-sub" id="tideNext">—</span>
+      </div>
+      <svg id="tideChart" viewBox="0 0 340 84" preserveAspectRatio="none" style="width:100%;height:84px;display:block;margin-top:4px"></svg>
+      <div class="wl-upd">น้ำทะเลหนุนสูงช่วงฝนหนัก = คลองระบายช้าลง เสี่ยงท่วมนานขึ้น · แบบจำลองน้ำขึ้นน้ำลง Open-Meteo Marine (ตารางทางการ: กรมอุทกศาสตร์ ทร.)</div>
+    </div>
+
     <details class="settings">
       <summary>ตั้งค่าการเชื่อมต่อ TMD API</summary>
       <div class="inner">
@@ -292,7 +302,7 @@ aside{border-left:1px solid var(--line);background:var(--panel);overflow-y:auto;
 <script>
 /* ================= CONFIG ================= */
 // ★ วาง URL ของ GAS Web App (ลงท้าย /exec) ตรงนี้บรรทัดเดียว — ห้ามใส่ TMD token ในไฟล์นี้ (repo เป็น public)
-const DEFAULT_PROXY = "https://script.google.com/macros/s/AKfycbxkyoMvtiVayUhZ1xDZpf1_622ZGTskfZZdcLU3gOnC5ilN9_JVINFDmkMfXfxyZ067/exec";
+const DEFAULT_PROXY = "PASTE_YOUR_GAS_EXEC_URL_HERE";
 
 /* จุดตัวแทนต่ออำเภอ (lat, lon) — ใช้ค่าสูงสุดรายชั่วโมงจากทุกจุด เพื่อไม่ให้ grid 2 กม. หลุด cell ฝน
    กะทู้: centroid, ป่าตอง, ตัวเมืองกะทู้ | ถลาง: centroid, เชิงทะเล, สนามบิน/สาคู | เมือง: ตัวเมือง, ฉลอง, ราไวย์ */
@@ -616,6 +626,60 @@ async function loadWlHistory(){
 }
 setInterval(loadWlHistory, 15 * 60 * 1000);
 
+/* ---------- น้ำขึ้นน้ำลง (ข้อมูลประกอบ) ---------- */
+async function loadTide(){
+  const proxy = state.proxyUrl || DEFAULT_PROXY;
+  if (!proxy || proxy.indexOf('PASTE_') === 0) return;
+  try{
+    const r = await fetch(proxy + (proxy.includes('?') ? '&' : '?') + 'src=tide&t=' + Date.now());
+    const j = await r.json();
+    if (j.error || !j.series || j.series.length < 6) throw new Error(j.error || 'no data');
+    renderTide(j);
+  }catch(e){
+    document.getElementById('tidePanel').style.display = 'none';
+  }
+}
+setInterval(loadTide, 30 * 60 * 1000);
+
+function thTime(iso){
+  return new Date(iso).toLocaleString('th-TH', {day:'numeric', month:'short', hour:'2-digit', minute:'2-digit'});
+}
+
+function renderTide(j){
+  document.getElementById('tidePanel').style.display = '';
+  document.getElementById('tideNow').textContent = j.now ? j.now.h.toFixed(2) : '—';
+  document.getElementById('tideTrend').textContent = j.rising === null ? '' : (j.rising ? '▲ กำลังขึ้น' : '▼ กำลังลง');
+  const parts = [];
+  if (j.next_high) parts.push('น้ำขึ้นสูงสุดถัดไป ' + thTime(j.next_high.t) + ' (' + j.next_high.h.toFixed(2) + ' ม.)');
+  if (j.next_low)  parts.push('ลงต่ำสุด ' + thTime(j.next_low.t) + ' (' + j.next_low.h.toFixed(2) + ' ม.)');
+  document.getElementById('tideNext').textContent = parts.join(' · ');
+
+  const s = j.series;
+  const W = 340, H = 84, PL = 26, PR = 6, PT = 6, PB = 13;
+  const iw = W - PL - PR, ih = H - PT - PB;
+  const vmax = Math.max(...s.map(p => p.h)), vmin = Math.min(...s.map(p => p.h));
+  const pad = (vmax - vmin) * 0.1 || 0.1;
+  const x = i => PL + i / (s.length - 1) * iw;
+  const y = v => PT + ih - (v - (vmin - pad)) / ((vmax + pad) - (vmin - pad)) * ih;
+  const line = s.map((p, i) => `${x(i).toFixed(1)},${y(p.h).toFixed(1)}`).join(' ');
+  const zeroY = y(0);
+  // เส้นเวลา "ตอนนี้"
+  let nowX = PL;
+  for (let i = 0; i < s.length; i++) if (Date.parse(s[i].t) <= Date.now()) nowX = x(i);
+  let ticks = '', seen = {};
+  [0, 0.5, 1].forEach(f => {
+    const i = Math.round(f * (s.length - 1));
+    if (seen[i]) return; seen[i] = true;
+    ticks += `<text x="${x(i).toFixed(1)}" y="${H-2}" fill="var(--muted)" font-size="8" text-anchor="middle">${thTime(s[i].t)}</text>`;
+  });
+  document.getElementById('tideChart').innerHTML =
+    (zeroY > PT && zeroY < PT + ih ? `<line x1="${PL}" y1="${zeroY.toFixed(1)}" x2="${W-PR}" y2="${zeroY.toFixed(1)}" stroke="var(--line)" stroke-width="0.8"/><text x="${PL-3}" y="${zeroY.toFixed(1)}" fill="var(--muted)" font-size="8" text-anchor="end" dominant-baseline="middle">0</text>` : '') +
+    `<line x1="${nowX.toFixed(1)}" y1="${PT}" x2="${nowX.toFixed(1)}" y2="${PT+ih}" stroke="var(--teal)" stroke-width="1" stroke-dasharray="3 3" opacity="0.8"/>` +
+    `<text x="${nowX.toFixed(1)}" y="${PT+7}" fill="var(--teal)" font-size="8" text-anchor="middle">ตอนนี้</text>` +
+    `<polyline points="${line}" fill="none" stroke="#7FB2D9" stroke-width="1.6"/>` +
+    ticks;
+}
+
 function renderWlCharts(recs){
   const wrap = document.getElementById('wlCharts');
   const blocks = [];
@@ -746,7 +810,7 @@ function renderCards(){
 setInterval(() => {
   document.getElementById('clock').textContent = new Date().toLocaleTimeString('th-TH', {hour12:false});
 }, 1000);
-document.getElementById('refreshBtn').addEventListener('click', () => { loadRadar(); loadForecast(); loadNowcast(); loadWaterLevel(); loadRainGauge(); loadWlHistory(); });
+document.getElementById('refreshBtn').addEventListener('click', () => { loadRadar(); loadForecast(); loadNowcast(); loadWaterLevel(); loadRainGauge(); loadWlHistory(); loadTide(); });
 
 /* help modal */
 const helpModal = document.getElementById('helpModal');
@@ -771,6 +835,7 @@ loadNowcast();
 loadWaterLevel();
 loadRainGauge();
 loadWlHistory();
+loadTide();
 </script>
 </body>
 </html>
