@@ -112,6 +112,12 @@ aside{border-left:1px solid var(--line);background:var(--panel);overflow-y:auto;
 .wl-mark{position:absolute;top:-2px;bottom:-2px;width:1px;background:var(--muted);opacity:.6}
 .wl-mark.m100{background:var(--crit);opacity:.9}
 
+.wl-chartwrap{margin-top:10px;border-top:1px solid var(--line);padding-top:8px}
+.wl-chartwrap .ttl{font-size:11px;color:var(--muted);margin-bottom:3px}
+.wl-chartwrap svg{width:100%;height:110px;display:block}
+.wl-legend{display:flex;gap:14px;font-size:10px;color:var(--muted);margin-top:4px}
+.wl-legend .sw{display:inline-block;width:12px;height:3px;border-radius:2px;margin-right:4px;vertical-align:middle}
+
 /* settings + legend */
 .settings{margin:2px 12px 12px;border:1px solid var(--line);border-radius:10px;background:var(--panel2)}
 .settings summary{padding:9px 14px;font-size:12.5px;color:var(--muted);cursor:pointer;list-style:none}
@@ -203,6 +209,7 @@ aside{border-left:1px solid var(--line);background:var(--panel);overflow-y:auto;
       <div class="wl-head">ระดับน้ำโทรมาตร <span class="en">สสน./กรมชลประทาน</span>
         <span class="lvl lv0" id="wlChip" style="margin-left:auto">—</span></div>
       <div id="wlRows"></div>
+      <div id="wlCharts"></div>
       <div class="wl-upd" id="wlUpd">—</div>
     </div>
 
@@ -285,7 +292,7 @@ aside{border-left:1px solid var(--line);background:var(--panel);overflow-y:auto;
 <script>
 /* ================= CONFIG ================= */
 // ★ วาง URL ของ GAS Web App (ลงท้าย /exec) ตรงนี้บรรทัดเดียว — ห้ามใส่ TMD token ในไฟล์นี้ (repo เป็น public)
-const DEFAULT_PROXY = "https://script.google.com/macros/s/AKfycbxkyoMvtiVayUhZ1xDZpf1_622ZGTskfZZdcLU3gOnC5ilN9_JVINFDmkMfXfxyZ067/exec";
+const DEFAULT_PROXY = "PASTE_YOUR_GAS_EXEC_URL_HERE";
 
 /* จุดตัวแทนต่ออำเภอ (lat, lon) — ใช้ค่าสูงสุดรายชั่วโมงจากทุกจุด เพื่อไม่ให้ grid 2 กม. หลุด cell ฝน
    กะทู้: centroid, ป่าตอง, ตัวเมืองกะทู้ | ถลาง: centroid, เชิงทะเล, สนามบิน/สาคู | เมือง: ตัวเมือง, ฉลอง, ราไวย์ */
@@ -593,6 +600,76 @@ async function loadWaterLevel(){
 }
 setInterval(loadWaterLevel, 15 * 60 * 1000);
 
+/* กราฟระดับน้ำ + การไหล ย้อนหลัง 48 ชม. — จาก data/history.jsonl ที่ logger เก็บทุก 15 นาที */
+const KEY_TH = { 'Kathu': 'อ.กะทู้', 'Thalang': 'อ.ถลาง', 'Mueang Phuket': 'อ.เมืองภูเก็ต' };
+async function loadWlHistory(){
+  try{
+    const r = await fetch('./data/history.jsonl?t=' + Date.now());
+    if (!r.ok) throw new Error();
+    const cut = new Date(Date.now() - 48 * 3600000).toISOString();
+    const recs = (await r.text()).split('\n').filter(Boolean)
+      .map(l => { try { return JSON.parse(l); } catch(e){ return null; } })
+      .filter(rec => rec && rec.t >= cut)
+      .sort((a,b) => a.t < b.t ? -1 : 1);
+    renderWlCharts(recs);
+  }catch(e){ document.getElementById('wlCharts').innerHTML = ''; }
+}
+setInterval(loadWlHistory, 15 * 60 * 1000);
+
+function renderWlCharts(recs){
+  const wrap = document.getElementById('wlCharts');
+  const blocks = [];
+  for (const key in KEY_TH){
+    const pts = recs.map(rec => {
+      const v = rec.d && rec.d[key];
+      return v && v.wlp != null ? { t: rec.t, p: v.wlp, q: v.wlq } : null;
+    }).filter(Boolean);
+    if (pts.length < 2) continue;
+
+    const W = 340, H = 110, PL = 26, PR = 30, PT = 6, PB = 14;
+    const iw = W - PL - PR, ih = H - PT - PB;
+    const pmax = Math.max(110, ...pts.map(x => x.p));
+    const qvals = pts.filter(x => x.q != null).map(x => x.q);
+    const qmax = Math.max(1, ...(qvals.length ? qvals : [1]));
+    const x = i => PL + i / (pts.length - 1) * iw;
+    const yp = v => PT + ih - v / pmax * ih;
+    const yq = v => PT + ih - v / qmax * ih;
+
+    // เส้นเกณฑ์ 70/90/100%
+    let marks = '';
+    [[70, 'var(--watch)'], [90, 'var(--warn)'], [100, 'var(--crit)']].forEach(([v, c]) => {
+      marks += `<line x1="${PL}" y1="${yp(v).toFixed(1)}" x2="${W-PR}" y2="${yp(v).toFixed(1)}" stroke="${c}" stroke-width="0.8" stroke-dasharray="4 3" opacity="0.7"/>` +
+               `<text x="${PL-3}" y="${yp(v).toFixed(1)}" fill="${c}" font-size="8" text-anchor="end" dominant-baseline="middle">${v}</text>`;
+    });
+    const lineP = pts.map((v, i) => `${x(i).toFixed(1)},${yp(v.p).toFixed(1)}`).join(' ');
+    const lineQ = pts.filter(v => v.q != null).length > 1
+      ? pts.map((v, i) => v.q != null ? `${x(i).toFixed(1)},${yq(v.q).toFixed(1)}` : null).filter(Boolean).join(' ')
+      : '';
+    let ticks = '', seen = {};
+    [0, 0.5, 1].forEach(f => {
+      const i = Math.round(f * (pts.length - 1));
+      if (seen[i]) return; seen[i] = true;
+      const t = new Date(pts[i].t);
+      ticks += `<text x="${x(i).toFixed(1)}" y="${H-3}" fill="var(--muted)" font-size="8" text-anchor="middle">${t.toLocaleString('th-TH',{day:'numeric',month:'short',hour:'2-digit',minute:'2-digit'})}</text>`;
+    });
+    blocks.push(`<div class="wl-chartwrap">
+      <div class="ttl">${KEY_TH[key]} · ย้อนหลัง 48 ชม.</div>
+      <svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="none">
+        ${marks}
+        <polyline points="${lineP}" fill="none" stroke="var(--teal)" stroke-width="1.6"/>
+        ${lineQ ? `<polyline points="${lineQ}" fill="none" stroke="var(--warn)" stroke-width="1.2" opacity="0.9"/>` : ''}
+        ${lineQ ? `<text x="${W-PR+3}" y="${PT+7}" fill="var(--warn)" font-size="8">${qmax.toFixed(0)}</text>` : ''}
+        ${ticks}
+      </svg>
+      <div class="wl-legend">
+        <span><span class="sw" style="background:var(--teal)"></span>ระดับน้ำ % ของตลิ่ง (เส้นประ = เกณฑ์ 70/90/100)</span>
+        ${lineQ ? '<span><span class="sw" style="background:var(--warn)"></span>อัตราการไหล ลบ.ม./วิ (แกนขวา)</span>' : ''}
+      </div>
+    </div>`);
+  }
+  wrap.innerHTML = blocks.join('');
+}
+
 function renderWaterLevel(){
   const j = state.wl;
   const panel = document.getElementById('wlPanel');
@@ -611,7 +688,7 @@ function renderWaterLevel(){
     const w = Math.min(100, Math.max(1, s.pct / SCALE_MAX * 100));
     return `<div class="wl-row">
       <div class="wl-name">${s.name} <span>${s.code}${s.river ? ' · ' + s.river : ''} · อ.${s.amphoe}${s.stale ? ' · <b style="color:var(--watch)">ข้อมูลเก่า ' + s.age_hr + ' ชม.</b>' : ''}</span></div>
-      <div class="wl-val"><b>${s.pct.toFixed(1)}%</b> ของตลิ่ง <small>${s.wl_msl != null ? s.wl_msl.toFixed(2) : '—'} / ตลิ่ง ${s.min_bank != null ? s.min_bank.toFixed(2) : '—'} ม.รทก. · ${new Date(s.dt.replace(' ','T') + ':00+07:00').toLocaleString('th-TH',{day:'numeric',month:'short',hour:'2-digit',minute:'2-digit'})}</small></div>
+      <div class="wl-val"><b>${s.pct.toFixed(1)}%</b> ของตลิ่ง <small>${s.wl_msl != null ? s.wl_msl.toFixed(2) : '—'} / ตลิ่ง ${s.min_bank != null ? s.min_bank.toFixed(2) : '—'} ${s.datum || 'ม.รทก.'} · ${new Date(s.dt.replace(' ','T') + ':00+07:00').toLocaleString('th-TH',{day:'numeric',month:'short',hour:'2-digit',minute:'2-digit'})}</small></div>
       <div class="wl-barwrap">
         <div class="wl-barfill" style="width:${w}%;background:${lv.color}${s.stale ? '55' : ''}"></div>
         <i class="wl-mark" style="left:${70/SCALE_MAX*100}%"></i>
@@ -669,7 +746,7 @@ function renderCards(){
 setInterval(() => {
   document.getElementById('clock').textContent = new Date().toLocaleTimeString('th-TH', {hour12:false});
 }, 1000);
-document.getElementById('refreshBtn').addEventListener('click', () => { loadRadar(); loadForecast(); loadNowcast(); loadWaterLevel(); loadRainGauge(); });
+document.getElementById('refreshBtn').addEventListener('click', () => { loadRadar(); loadForecast(); loadNowcast(); loadWaterLevel(); loadRainGauge(); loadWlHistory(); });
 
 /* help modal */
 const helpModal = document.getElementById('helpModal');
@@ -693,6 +770,7 @@ loadForecast();
 loadNowcast();
 loadWaterLevel();
 loadRainGauge();
+loadWlHistory();
 </script>
 </body>
 </html>
