@@ -17,7 +17,7 @@ from pathlib import Path
 
 import requests
 
-PROXY_URL = "https://script.google.com/macros/s/AKfycbxkyoMvtiVayUhZ1xDZpf1_622ZGTskfZZdcLU3gOnC5ilN9_JVINFDmkMfXfxyZ067/exec"   # ★ URL GAS Web App (ลงท้าย /exec)
+PROXY_URL = "PASTE_YOUR_GAS_EXEC_URL_HERE"   # ★ URL GAS Web App (ลงท้าย /exec)
 KEEP_DAYS = 30                                # เก็บประวัติย้อนหลังกี่วัน (ที่ 15 นาที/จุด ≈ 96 จุด/วัน)
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -50,27 +50,29 @@ def fetch_rain24():
 
 
 def fetch_nwp():
-    """ฝนพยากรณ์รายชั่วโมงจาก TMD ผ่าน proxy → {district: (rain2h, max_hr)} แบบ max จาก 3 จุด
-    ทนทั้งเคสเรียกไม่สำเร็จ และเคส TMD ตอบสำเร็จแต่ forecasts ว่าง (เกิดช่วงรอยต่อรอบรันโมเดล)"""
+    """NWP หลายแบบจำลองผ่าน proxy ?src=nwp (TMD หลัก / Open-Meteo สำรอง)
+    → {district: (rain2h, max_hr, source)} แบบ max จาก 3 จุด"""
     out = {}
     for name, pts in DISTRICTS.items():
-        series = []
+        series, srcs = [], set()
         for lat, lon in pts:
             try:
-                j = get_json(f"{PROXY_URL}?lat={lat}&lon={lon}&fields=rain,cond&duration=8")
-                fc = j["WeatherForecasts"][0]["forecasts"]
-                vals = [float(x["data"].get("rain") or 0) for x in fc[:2]]
+                j = get_json(f"{PROXY_URL}?src=nwp&lat={lat}&lon={lon}")
+                if j.get("error") or not j.get("series"):
+                    print(f"nwp {name} {lat},{lon}: {j.get('error', 'empty')}", file=sys.stderr)
+                    continue
+                vals = [float(x.get("rain") or 0) for x in j["series"][:2]]
                 if vals:
                     series.append(vals)
-                else:
-                    print(f"nwp {name} {lat},{lon}: empty forecasts", file=sys.stderr)
+                    srcs.add(j.get("source", "?"))
             except Exception as e:
                 print(f"nwp {name} {lat},{lon} skip: {e}", file=sys.stderr)
         if series:
             n = min(len(s) for s in series)
             hourly_max = [max(s[i] for s in series) for i in range(n)]
             if hourly_max:
-                out[name] = (round(sum(hourly_max), 2), round(max(hourly_max), 2))
+                src = "om" if "openmeteo" in srcs else "tmd"
+                out[name] = (round(sum(hourly_max), 2), round(max(hourly_max), 2), src)
     return out
 
 
@@ -98,13 +100,14 @@ def main():
 
     rec = {"t": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"), "d": {}}
     for name in DISTRICTS:
-        f2, fx = nwp.get(name, (None, None))
+        f2, fx, fs = nwp.get(name, (None, None, None))
         r60, rp = radar.get(name, (None, None))
         rec["d"][name] = {
             "a": rain24.get(name),   # ฝนสะสม 24 ชม. (HII)
             "r1": rain1.get(name),   # ฝนจริงชั่วโมงล่าสุด (HII)
             "f2": f2,                # NWP ฝนรวม 2 ชม.ข้างหน้า
             "fx": fx,                # NWP สูงสุดรายชั่วโมง (ใน 2 ชม.)
+            "fs": fs,                # แหล่ง NWP: tmd | om (Open-Meteo สำรอง)
             "r60": r60,              # เรดาร์ ฝนสะสมคาด 60 นาที (p95)
             "rp": rp,                # เรดาร์ อัตราฝนพีค (p95, มม./ชม.)
         }
