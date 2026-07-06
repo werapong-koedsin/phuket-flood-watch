@@ -278,7 +278,7 @@ aside{border-left:1px solid var(--line);background:var(--panel);overflow-y:auto;
 <script>
 /* ================= CONFIG ================= */
 // ★ วาง URL ของ GAS Web App (ลงท้าย /exec) ตรงนี้บรรทัดเดียว — ห้ามใส่ TMD token ในไฟล์นี้ (repo เป็น public)
-const DEFAULT_PROXY = "https://script.google.com/macros/s/AKfycbxkyoMvtiVayUhZ1xDZpf1_622ZGTskfZZdcLU3gOnC5ilN9_JVINFDmkMfXfxyZ067/exec";
+const DEFAULT_PROXY = "PASTE_YOUR_GAS_EXEC_URL_HERE";
 
 /* จุดตัวแทนต่ออำเภอ (lat, lon) — ใช้ค่าสูงสุดรายชั่วโมงจากทุกจุด เพื่อไม่ให้ grid 2 กม. หลุด cell ฝน
    กะทู้: centroid, ป่าตอง, ตัวเมืองกะทู้ | ถลาง: centroid, เชิงทะเล, สนามบิน/สาคู | เมือง: ตัวเมือง, ฉลอง, ราไวย์ */
@@ -433,17 +433,15 @@ document.getElementById('opSlider').addEventListener('input', e => { state.opaci
 function apiLog(msg){ document.getElementById('apiLog').textContent = 'สถานะ: ' + msg; }
 
 async function fetchPoint(lat, lon){
-  const params = `lat=${lat}&lon=${lon}&fields=rain,cond&duration=${FORECAST_HOURS}`;
   const proxy = state.proxyUrl || DEFAULT_PROXY;
   if (!proxy || proxy.indexOf('PASTE_') === 0) throw new Error('ยังไม่ได้ตั้งค่า Proxy URL');
-  const url = proxy + (proxy.includes('?') ? '&' : '?') + params;
+  const url = proxy + (proxy.includes('?') ? '&' : '?') + `src=nwp&lat=${lat}&lon=${lon}`;
   const r = await fetch(url);
   if (!r.ok) throw new Error('HTTP ' + r.status);
   const j = await r.json();
-  const fc = j.WeatherForecasts && j.WeatherForecasts[0] && j.WeatherForecasts[0].forecasts;
-  if (!fc) throw new Error('รูปแบบข้อมูลไม่ตรงที่คาด');
-  if (!fc.length) throw new Error('TMD ส่งข้อมูลว่าง (รอยต่อรอบรันโมเดล)');
-  return fc.slice(0, FORECAST_HOURS).map(x => ({time:x.time, rain: +(x.data && x.data.rain || 0)}));
+  if (j.error || !j.series || !j.series.length) throw new Error(j.error || 'ไม่มีข้อมูล NWP');
+  state.nwpSources.add(j.source);
+  return j.series.slice(0, FORECAST_HOURS).map(x => ({time:x.time, rain: +x.rain || 0}));
 }
 
 async function fetchDistrictForecast(d){
@@ -459,6 +457,7 @@ async function fetchDistrictForecast(d){
 
 async function loadForecast(){
   let okCount = 0, lastErr = null;
+  state.nwpSources = new Set();
   const keys = Object.keys(state.districts);
   for (const key of keys){
     const d = state.districts[key];
@@ -475,11 +474,17 @@ async function loadForecast(){
   }
   const pill = document.getElementById('statusPill');
   const txt = document.getElementById('statusTxt');
-  if (okCount === keys.length){
+  const usedFallback = state.nwpSources.has('openmeteo');
+  if (okCount === keys.length && !usedFallback){
     pill.className = 'pill live';
     txt.textContent = 'LIVE · TMD 2km';
     document.getElementById('srcTxt').textContent = 'TMD NWP API (2 กม. สูงสุดจาก 3 จุด/อำเภอ)';
     apiLog('เชื่อมต่อ TMD API สำเร็จ');
+  } else if (okCount === keys.length && usedFallback){
+    pill.className = 'pill demo';
+    txt.textContent = 'LIVE · NWP สำรอง';
+    document.getElementById('srcTxt').textContent = 'Open-Meteo (ECMWF+GFS สูงสุด, ~10 กม.) — TMD ไม่มีข้อมูลชั่วคราว';
+    apiLog('TMD ว่าง — ใช้ NWP สำรอง Open-Meteo อัตโนมัติ');
   } else if (okCount > 0){
     pill.className = 'pill demo';
     txt.textContent = 'LIVE · NWP ขาด ' + (keys.length - okCount) + ' อำเภอ';
