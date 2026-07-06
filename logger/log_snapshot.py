@@ -95,6 +95,16 @@ def fetch_wl():
         return {}
 
 
+def fetch_tide():
+    """ระดับน้ำทะเล (ม.รทก.) จากแบบจำลองน้ำขึ้นน้ำลง — ตัวแปรร่วมสำหรับวิเคราะห์ compound flood"""
+    try:
+        j = get_json(f"{PROXY_URL}?src=tide&t={int(datetime.now().timestamp())}")
+        return (j.get("now") or {}).get("h")
+    except Exception as e:
+        print(f"tide skip: {e}", file=sys.stderr)
+        return None
+
+
 def read_radar():
     """เรดาร์ nowcast จากไฟล์ใน repo → {district: (rain60_p95, peak)} — ข้ามถ้าข้อมูลเก่า"""
     try:
@@ -118,7 +128,9 @@ def main():
     nwp = fetch_nwp()
     radar = read_radar()
 
-    rec = {"t": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"), "d": {}}
+    rec = {"t": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+           "td": fetch_tide(),   # ระดับน้ำทะเล ม.รทก. (ตัวแปรร่วม ไม่ใช้เตือน)
+           "d": {}}
     for name in DISTRICTS:
         f2, fx, fs, f2m = nwp.get(name, (None, None, None, None))
         r60, rp = radar.get(name, (None, None))
