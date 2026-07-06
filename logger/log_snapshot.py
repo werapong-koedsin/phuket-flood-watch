@@ -17,7 +17,7 @@ from pathlib import Path
 
 import requests
 
-PROXY_URL = "https://script.google.com/macros/s/AKfycbxkyoMvtiVayUhZ1xDZpf1_622ZGTskfZZdcLU3gOnC5ilN9_JVINFDmkMfXfxyZ067/exec"   # ★ URL GAS Web App (ลงท้าย /exec)
+PROXY_URL = "PASTE_YOUR_GAS_EXEC_URL_HERE"   # ★ URL GAS Web App (ลงท้าย /exec)
 KEEP_DAYS = 30                                # เก็บประวัติย้อนหลังกี่วัน (ที่ 15 นาที/จุด ≈ 96 จุด/วัน)
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -50,7 +50,8 @@ def fetch_rain24():
 
 
 def fetch_nwp():
-    """ฝนพยากรณ์รายชั่วโมงจาก TMD ผ่าน proxy → {district: (rain2h, max_hr)} แบบ max จาก 3 จุด"""
+    """ฝนพยากรณ์รายชั่วโมงจาก TMD ผ่าน proxy → {district: (rain2h, max_hr)} แบบ max จาก 3 จุด
+    ทนทั้งเคสเรียกไม่สำเร็จ และเคส TMD ตอบสำเร็จแต่ forecasts ว่าง (เกิดช่วงรอยต่อรอบรันโมเดล)"""
     out = {}
     for name, pts in DISTRICTS.items():
         series = []
@@ -58,13 +59,18 @@ def fetch_nwp():
             try:
                 j = get_json(f"{PROXY_URL}?lat={lat}&lon={lon}&fields=rain,cond&duration=8")
                 fc = j["WeatherForecasts"][0]["forecasts"]
-                series.append([float(x["data"].get("rain") or 0) for x in fc[:2]])
+                vals = [float(x["data"].get("rain") or 0) for x in fc[:2]]
+                if vals:
+                    series.append(vals)
+                else:
+                    print(f"nwp {name} {lat},{lon}: empty forecasts", file=sys.stderr)
             except Exception as e:
                 print(f"nwp {name} {lat},{lon} skip: {e}", file=sys.stderr)
         if series:
             n = min(len(s) for s in series)
             hourly_max = [max(s[i] for s in series) for i in range(n)]
-            out[name] = (round(sum(hourly_max), 2), round(max(hourly_max), 2))
+            if hourly_max:
+                out[name] = (round(sum(hourly_max), 2), round(max(hourly_max), 2))
     return out
 
 
