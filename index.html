@@ -101,6 +101,17 @@ aside{border-left:1px solid var(--line);background:var(--panel);overflow-y:auto;
 #wlChart{width:100%;height:96px;display:block;margin-top:6px}
 .wl-upd{font-family:var(--mono);font-size:10px;color:#5E7488;margin-top:5px}
 
+.wl-row{margin:8px 0 2px}
+.wl-name{font-size:12.5px;font-weight:600}
+.wl-name span{font-size:10.5px;color:var(--muted);font-weight:400;margin-left:6px}
+.wl-val{font-family:var(--mono);font-size:13px;margin:2px 0 4px}
+.wl-val b{font-size:17px}
+.wl-val small{color:var(--muted);font-size:10.5px;margin-left:6px}
+.wl-barwrap{position:relative;height:9px;background:var(--bg);border:1px solid var(--line);border-radius:5px;overflow:hidden}
+.wl-barfill{height:100%;border-radius:4px;transition:width .4s}
+.wl-mark{position:absolute;top:-2px;bottom:-2px;width:1px;background:var(--muted);opacity:.6}
+.wl-mark.m100{background:var(--crit);opacity:.9}
+
 /* settings + legend */
 .settings{margin:2px 12px 12px;border:1px solid var(--line);border-radius:10px;background:var(--panel2)}
 .settings summary{padding:9px 14px;font-size:12.5px;color:var(--muted);cursor:pointer;list-style:none}
@@ -189,14 +200,10 @@ aside{border-left:1px solid var(--line);background:var(--panel);overflow-y:auto;
     <div class="cards" id="cards"></div>
 
     <div class="wlpanel lv0" id="wlPanel" style="display:none">
-      <div class="wl-head">ระดับน้ำคลองบางใหญ่ (ตอนล่าง) <span class="en">X.191 · โรงเรียนสตรีภูเก็ต</span>
+      <div class="wl-head">ระดับน้ำโทรมาตร <span class="en">สสน./กรมชลประทาน</span>
         <span class="lvl lv0" id="wlChip" style="margin-left:auto">—</span></div>
-      <div class="wl-now">
-        <span class="big" id="wlNow">—</span><span class="wl-sub">ม.</span>
-        <span class="wl-sub">ตลิ่ง 4.60 ม. · <b id="wlPct" style="color:var(--text)">—</b> ของตลิ่ง · Q <span id="wlQ">—</span> ลบ.ม./วิ</span>
-      </div>
-      <svg id="wlChart" viewBox="0 0 340 96" preserveAspectRatio="none" aria-label="กราฟระดับน้ำย้อนหลัง"></svg>
-      <div class="wl-upd">ล่าสุด: <span id="wlTime">—</span> · แหล่งข้อมูล: กรมชลประทาน (hyd-app)</div>
+      <div id="wlRows"></div>
+      <div class="wl-upd" id="wlUpd">—</div>
     </div>
 
     <details class="settings">
@@ -278,7 +285,7 @@ aside{border-left:1px solid var(--line);background:var(--panel);overflow-y:auto;
 <script>
 /* ================= CONFIG ================= */
 // ★ วาง URL ของ GAS Web App (ลงท้าย /exec) ตรงนี้บรรทัดเดียว — ห้ามใส่ TMD token ในไฟล์นี้ (repo เป็น public)
-const DEFAULT_PROXY = "https://script.google.com/macros/s/AKfycbxkyoMvtiVayUhZ1xDZpf1_622ZGTskfZZdcLU3gOnC5ilN9_JVINFDmkMfXfxyZ067/exec";
+const DEFAULT_PROXY = "PASTE_YOUR_GAS_EXEC_URL_HERE";
 
 /* จุดตัวแทนต่ออำเภอ (lat, lon) — ใช้ค่าสูงสุดรายชั่วโมงจากทุกจุด เพื่อไม่ให้ grid 2 กม. หลุด cell ฝน
    กะทู้: centroid, ป่าตอง, ตัวเมืองกะทู้ | ถลาง: centroid, เชิงทะเล, สนามบิน/สาคู | เมือง: ตัวเมือง, ฉลอง, ราไวย์ */
@@ -524,7 +531,8 @@ function recomputeLevels(){
     const nc = state.nowcast && !state.nowcast._stale && state.nowcast.districts[key];
     d.radar = nc || null;
     d.radarLevel = nc ? radarLevelOf(nc, d.thScale) : 0;
-    d.wlLevel = (key === 'Mueang Phuket' && state.wlLevel) ? state.wlLevel : 0;
+    const wlD = state.wl && state.wl.districts && state.wl.districts[key];
+    d.wlLevel = (wlD && !wlD.stale) ? wlD.level : 0;
     d.rain1 = rg ? rg.rain1_max : null;
     d.liveLevel = (rg && rainFresh(rg.dt)) ? liveRainLevel(rg.rain1_max, d.thScale) : 0;
     d.level = Math.max(d.nwpLevel, d.radarLevel, d.wlLevel, d.liveLevel);
@@ -567,28 +575,18 @@ async function loadRainGauge(){
 }
 setInterval(loadRainGauge, 15 * 60 * 1000);
 
-/* ---------- ระดับน้ำ X.191 คลองบางใหญ่ ---------- */
-const WL_BANK = 4.60;
-function wlLevelOf(wl){
-  const r = wl / WL_BANK;
-  if (r >= 1.0) return 3;
-  if (r >= 0.9) return 2;
-  if (r >= 0.7) return 1;
-  return 0;
-}
-
-const WL_MAX_AGE_HR = 6;   // ข้อมูลเก่ากว่านี้ แสดงได้แต่ไม่ใช้ยกระดับเตือน
+/* ---------- ระดับน้ำโทรมาตร สสน./ชป. (X.190A บ้านเก็ตโฮ่ ฯลฯ) ---------- */
 async function loadWaterLevel(){
+  const proxy = state.proxyUrl || DEFAULT_PROXY;
+  if (!proxy || proxy.indexOf('PASTE_') === 0) return;
   try{
-    const r = await fetch('./data/waterlevel.json?t=' + Date.now());
+    const r = await fetch(proxy + (proxy.includes('?') ? '&' : '?') + 'src=wl&t=' + Date.now());
     const j = await r.json();
-    if (j.error || !j.series || !j.series.length) throw new Error(j.error || 'no data');
+    if (j.error || !j.stations || !j.stations.length) throw new Error(j.error || 'no data');
     state.wl = j;
-    const ageHr = (Date.now() - new Date(j.latest.t).getTime()) / 3600000;
-    state.wlLevel = ageHr <= WL_MAX_AGE_HR ? wlLevelOf(j.latest.wl) : 0;
     renderWaterLevel();
   }catch(e){
-    state.wl = null; state.wlLevel = 0;
+    state.wl = null;
     document.getElementById('wlPanel').style.display = 'none';
   }
   recomputeLevels();
@@ -599,32 +597,31 @@ function renderWaterLevel(){
   const j = state.wl;
   const panel = document.getElementById('wlPanel');
   panel.style.display = '';
-  const lv = state.wlLevel, L_ = LEVELS[lv];
+  let worst = 0;
+  Object.values(j.districts || {}).forEach(d => { if (!d.stale && d.level > worst) worst = d.level; });
+  const L_ = LEVELS[worst];
   panel.className = 'wlpanel ' + L_.cls;
   const chip = document.getElementById('wlChip');
   chip.className = 'lvl ' + L_.cls;
   chip.textContent = L_.name;
-  document.getElementById('wlNow').textContent = j.latest.wl.toFixed(2);
-  document.getElementById('wlPct').textContent = Math.round(j.latest.wl / WL_BANK * 100) + '%';
-  document.getElementById('wlQ').textContent = j.latest.q != null ? j.latest.q.toFixed(1) : '—';
-  document.getElementById('wlTime').textContent = new Date(j.latest.t).toLocaleString('th-TH',
-    {day:'numeric', month:'short', hour:'2-digit', minute:'2-digit'});
 
-  // SVG line chart: series ทั้งหมด (สูงสุด 72 จุด) + เส้นตลิ่ง
-  const s = j.series.slice(-72);
-  const W = 340, H = 96, PAD = 4;
-  const vmax = Math.max(WL_BANK * 1.08, ...s.map(p => p.wl)) ;
-  const vmin = Math.min(0, ...s.map(p => p.wl));
-  const x = i => PAD + i / (s.length - 1) * (W - 2 * PAD);
-  const y = v => H - PAD - (v - vmin) / (vmax - vmin) * (H - 2 * PAD);
-  const pts = s.map((p, i) => `${x(i).toFixed(1)},${y(p.wl).toFixed(1)}`).join(' ');
-  const bankY = y(WL_BANK).toFixed(1);
-  const lastX = x(s.length - 1).toFixed(1), lastY = y(s[s.length-1].wl).toFixed(1);
-  document.getElementById('wlChart').innerHTML =
-    `<line x1="${PAD}" y1="${bankY}" x2="${W-PAD}" y2="${bankY}" stroke="var(--crit)" stroke-width="1" stroke-dasharray="4 3" opacity="0.8"/>` +
-    `<text x="${W-PAD-2}" y="${bankY-3}" fill="var(--crit)" font-size="8" text-anchor="end" opacity="0.9">ตลิ่ง 4.60</text>` +
-    `<polyline points="${pts}" fill="none" stroke="var(--teal)" stroke-width="1.6" stroke-linejoin="round"/>` +
-    `<circle cx="${lastX}" cy="${lastY}" r="2.6" fill="var(--teal)"/>`;
+  const SCALE_MAX = 110;   // แถบยาวถึง 110% ของตลิ่ง
+  document.getElementById('wlRows').innerHTML = j.stations.map(s => {
+    const lv = LEVELS[s.stale ? 0 : s.level];
+    const w = Math.min(100, Math.max(1, s.pct / SCALE_MAX * 100));
+    return `<div class="wl-row">
+      <div class="wl-name">${s.name} <span>${s.code}${s.river ? ' · ' + s.river : ''} · อ.${s.amphoe}${s.stale ? ' · <b style="color:var(--watch)">ข้อมูลเก่า ' + s.age_hr + ' ชม.</b>' : ''}</span></div>
+      <div class="wl-val"><b>${s.pct.toFixed(1)}%</b> ของตลิ่ง <small>${s.wl_msl != null ? s.wl_msl.toFixed(2) : '—'} / ตลิ่ง ${s.min_bank != null ? s.min_bank.toFixed(2) : '—'} ม.รทก. · ${new Date(s.dt.replace(' ','T') + ':00+07:00').toLocaleString('th-TH',{day:'numeric',month:'short',hour:'2-digit',minute:'2-digit'})}</small></div>
+      <div class="wl-barwrap">
+        <div class="wl-barfill" style="width:${w}%;background:${lv.color}${s.stale ? '55' : ''}"></div>
+        <i class="wl-mark" style="left:${70/SCALE_MAX*100}%"></i>
+        <i class="wl-mark" style="left:${90/SCALE_MAX*100}%"></i>
+        <i class="wl-mark m100" style="left:${100/SCALE_MAX*100}%"></i>
+      </div>
+    </div>`;
+  }).join('');
+  document.getElementById('wlUpd').textContent =
+    'เกณฑ์: ≥70% เฝ้าระวัง · ≥90% เตือนภัย · ล้นตลิ่งวิกฤต · แหล่งข้อมูล: คลังข้อมูลน้ำแห่งชาติ (สสน.)';
 }
 setInterval(loadForecast, 15 * 60 * 1000);
 
