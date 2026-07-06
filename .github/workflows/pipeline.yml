@@ -31,10 +31,14 @@ jobs:
       - name: Run radar nowcast
         run: python nowcast/nowcast.py
 
+      # logger เป็นงานเก็บสถิติ — ล้มได้โดยไม่ฉุดงานเตือนภัย (จะเห็นเป็นเครื่องหมายเตือนสีส้มแทนแดง)
       - name: Log history snapshot
+        continue-on-error: true
         run: python logger/log_snapshot.py
 
+      # commit เสมอแม้ logger ล้ม เพื่อให้ nowcast.json สดถึง dashboard
       - name: Commit results
+        if: always()
         run: |
           git config user.name "pipeline-bot"
           git config user.email "pipeline-bot@users.noreply.github.com"
