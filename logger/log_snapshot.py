@@ -84,6 +84,16 @@ def fetch_nwp():
     return out
 
 
+def fetch_wl():
+    """ระดับน้ำโทรมาตร (% ของตลิ่ง) รายอำเภอจาก GAS ?src=wl → {district: pct}"""
+    try:
+        j = get_json(f"{PROXY_URL}?src=wl&t={int(datetime.now().timestamp())}")
+        return {k: (None if v.get("stale") else v.get("pct")) for k, v in j.get("districts", {}).items()}
+    except Exception as e:
+        print(f"waterlevel skip: {e}", file=sys.stderr)
+        return {}
+
+
 def read_radar():
     """เรดาร์ nowcast จากไฟล์ใน repo → {district: (rain60_p95, peak)} — ข้ามถ้าข้อมูลเก่า"""
     try:
@@ -103,6 +113,7 @@ def main():
         raise SystemExit("ยังไม่ได้ตั้งค่า PROXY_URL ใน logger/log_snapshot.py")
 
     rain24, rain1 = fetch_rain24()
+    wl = fetch_wl()
     nwp = fetch_nwp()
     radar = read_radar()
 
@@ -113,6 +124,7 @@ def main():
         rec["d"][name] = {
             "a": rain24.get(name),   # ฝนสะสม 24 ชม. (HII)
             "r1": rain1.get(name),   # ฝนจริงชั่วโมงล่าสุด (HII)
+            "wlp": wl.get(name),     # ระดับน้ำโทรมาตร % ของตลิ่ง (null ถ้า stale/ไม่มีสถานี)
             "f2": f2,                # NWP ฝนรวม 2 ชม.ข้างหน้า
             "fx": fx,                # NWP สูงสุดรายชั่วโมง (ใน 2 ชม.)
             "fs": fs,                # แหล่ง NWP: tmd | om (Open-Meteo สำรอง)
