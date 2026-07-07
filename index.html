@@ -223,6 +223,18 @@ aside{border-left:1px solid var(--line);background:var(--panel);overflow-y:auto;
       <div class="wl-upd">น้ำทะเลหนุนสูงช่วงฝนหนัก = คลองระบายช้าลง เสี่ยงท่วมนานขึ้น · แบบจำลองน้ำขึ้นน้ำลง Open-Meteo Marine (ตารางทางการ: กรมอุทกศาสตร์ ทร.)</div>
     </div>
 
+    <!-- ══ โมดูลอิสระ: X.191 โหลดตรงจาก RID ผ่านเบราว์เซอร์ (แสดงประกอบ ไม่เข้าเกณฑ์เตือน) ══ -->
+    <div class="wlpanel lv0" id="x191Panel" style="display:none">
+      <div class="wl-head">คลองบางใหญ่ (ตอนล่าง) · ตัวเมือง <span class="en">X.191 · โรงเรียนสตรีภูเก็ต · ข้อมูลประกอบ</span>
+        <span class="lvl lv0" id="x191Chip" style="margin-left:auto">—</span></div>
+      <div class="wl-now">
+        <span class="big" id="x191Now">—</span><span class="wl-sub">ม. <b id="x191Pct" style="color:var(--text)">—</b> ของตลิ่ง 4.60 ม.</span>
+        <span class="wl-sub" id="x191Meta">—</span>
+      </div>
+      <svg id="x191Chart" viewBox="0 0 340 90" preserveAspectRatio="none" style="width:100%;height:90px;display:block;margin-top:4px"></svg>
+      <div class="wl-upd">โหลดตรงจากกรมชลประทาน (hyd-app) ผ่านเบราว์เซอร์ของคุณ — เห็นเฉพาะเมื่อเข้าจากเครือข่ายในไทย · ข้อมูลหน่วง ~1–2 ชม. เป็นปกติ · ไม่ใช้คำนวณระดับเตือน</div>
+    </div>
+
     <details class="settings">
       <summary>ตั้งค่าการเชื่อมต่อ TMD API</summary>
       <div class="inner">
@@ -302,7 +314,7 @@ aside{border-left:1px solid var(--line);background:var(--panel);overflow-y:auto;
 <script>
 /* ================= CONFIG ================= */
 // ★ วาง URL ของ GAS Web App (ลงท้าย /exec) ตรงนี้บรรทัดเดียว — ห้ามใส่ TMD token ในไฟล์นี้ (repo เป็น public)
-const DEFAULT_PROXY = "https://script.google.com/macros/s/AKfycbxkyoMvtiVayUhZ1xDZpf1_622ZGTskfZZdcLU3gOnC5ilN9_JVINFDmkMfXfxyZ067/exec";
+const DEFAULT_PROXY = "PASTE_YOUR_GAS_EXEC_URL_HERE";
 
 /* จุดตัวแทนต่ออำเภอ (lat, lon) — ใช้ค่าสูงสุดรายชั่วโมงจากทุกจุด เพื่อไม่ให้ grid 2 กม. หลุด cell ฝน
    กะทู้: centroid, ป่าตอง, ตัวเมืองกะทู้ | ถลาง: centroid, เชิงทะเล, สนามบิน/สาคู | เมือง: ตัวเมือง, ฉลอง, ราไวย์ */
@@ -827,6 +839,101 @@ document.getElementById('applyProxy').addEventListener('click', () => {
 });
 
 
+
+/* ══════════ โมดูลอิสระ: X.191 จาก RID hyd-app (browser-direct, ไทยเท่านั้น) ══════════
+   RID เปิด CORS (Access-Control-Allow-Origin: *) แต่บล็อก IP ต่างประเทศ →
+   เบราว์เซอร์ผู้ใช้ในไทยเรียกตรงได้ / GAS-GitHub เรียกไม่ได้ → โมดูลนี้จึงแสดงประกอบเท่านั้น
+   ล้มเมื่อไหร่ (ผู้ชมต่างประเทศ/RID ล่ม) แผงซ่อนตัวเอง ไม่กระทบส่วนอื่น */
+const X191B = {
+  URL: 'https://hyd-app.rid.go.th/webservice/getGroupHourlyWaterLevelReportHL.ashx',
+  GROUP: '1178',
+  BANK: 4.60,
+  MAX_AGE_HR: 4,
+};
+
+function x191Parse(rows, nowBkk){
+  const dayIds = [...new Set(Object.keys(rows[0])
+    .map(k => (k.match(/^wlvalues(\d+)$/) || [])[1]).filter(Boolean))].map(Number).sort((a,b) => a-b);
+  if (!dayIds.length) throw new Error('no wlvalues columns');
+  const n = dayIds.length, series = [];
+  dayIds.forEach((di, i) => {
+    const base = Date.UTC(nowBkk.getUTCFullYear(), nowBkk.getUTCMonth(), nowBkk.getUTCDate()) + (i - (n - 1)) * 86400e3;
+    rows.forEach(r0 => {
+      const hr = Math.round(parseFloat(r0.hourlytime));
+      const wl = parseFloat(r0['wlvalues' + di]);
+      if (!isFinite(hr) || !isFinite(wl)) return;
+      const q = parseFloat(String(r0['qvalues' + di] || '').replace(/,/g, ''));
+      // base เป็น "เที่ยงคืนเวลาไทย" ที่ shift ไว้ +7 → ลบ 7 ชม. กลับเป็น epoch จริง / ชม.24 ข้ามวันอัตโนมัติ
+      series.push({ t: base + hr * 3600e3 - 7 * 3600e3, wl: wl, q: isFinite(q) ? q : null });
+    });
+  });
+  series.sort((a, b) => a.t - b.t);
+  if (!series.length) throw new Error('parsed 0 points');
+  return series;
+}
+
+async function x191Load(){
+  try{
+    const nowBkk = new Date(Date.now() + 7 * 3600e3);
+    const thaiDate = String(nowBkk.getUTCDate()).padStart(2,'0') + '/' +
+                     String(nowBkk.getUTCMonth() + 1).padStart(2,'0') + '/' + (nowBkk.getUTCFullYear() + 543);
+    const body = new URLSearchParams({
+      'DW[StationGroupID]': X191B.GROUP, 'DW[TimeCurrent]': thaiDate, 'DW[Frozen]': 'false',
+      '_search': 'false', 'nd': String(Date.now()), 'rows': '100', 'page': '1',
+      'sidx': 'indexhourly', 'sord': 'asc',
+    });
+    const r = await fetch(X191B.URL, { method: 'POST', body: body });
+    if (!r.ok) throw new Error('HTTP ' + r.status);
+    const j = JSON.parse(await r.text());
+    x191Render(x191Parse(j.rows, nowBkk));
+  }catch(e){
+    document.getElementById('x191Panel').style.display = 'none';
+  }
+}
+
+function x191Render(series){
+  const panel = document.getElementById('x191Panel');
+  panel.style.display = '';
+  const last = series[series.length - 1];
+  const ageHr = (Date.now() - last.t) / 3600e3;
+  const pct = last.wl / X191B.BANK * 100;
+  const stale = ageHr > X191B.MAX_AGE_HR;
+  let lv = 0;
+  if (!stale){ if (pct >= 100) lv = 3; else if (pct >= 90) lv = 2; else if (pct >= 70) lv = 1; }
+  const L_ = LEVELS[lv];
+  panel.className = 'wlpanel ' + L_.cls;
+  const chip = document.getElementById('x191Chip');
+  chip.className = 'lvl ' + L_.cls;
+  chip.textContent = stale ? 'ข้อมูลเก่า' : L_.name;
+  document.getElementById('x191Now').textContent = last.wl.toFixed(2);
+  document.getElementById('x191Pct').textContent = pct.toFixed(0) + '%';
+  document.getElementById('x191Meta').textContent =
+    (last.q != null ? 'Q ' + last.q.toFixed(1) + ' ลบ.ม./วิ · ' : '') +
+    new Date(last.t).toLocaleString('th-TH', {day:'numeric', month:'short', hour:'2-digit', minute:'2-digit'});
+
+  const s = series.slice(-72);
+  const W = 340, H = 90, PL = 24, PR = 6, PT = 5, PB = 13;
+  const iw = W - PL - PR, ih = H - PT - PB;
+  const vmax = Math.max(X191B.BANK * 1.08, ...s.map(p => p.wl));
+  const x = i => PL + i / (s.length - 1) * iw;
+  const y = v => PT + ih - v / vmax * ih;
+  const bankY = y(X191B.BANK).toFixed(1);
+  const line = s.map((p, i) => `${x(i).toFixed(1)},${y(p.wl).toFixed(1)}`).join(' ');
+  let ticks = '', seen = {};
+  [0, 0.5, 1].forEach(f => {
+    const i = Math.round(f * (s.length - 1));
+    if (seen[i]) return; seen[i] = true;
+    ticks += `<text x="${x(i).toFixed(1)}" y="${H-2}" fill="var(--muted)" font-size="8" text-anchor="middle">${new Date(s[i].t).toLocaleString('th-TH',{day:'numeric',month:'short',hour:'2-digit',minute:'2-digit'})}</text>`;
+  });
+  document.getElementById('x191Chart').innerHTML =
+    `<line x1="${PL}" y1="${bankY}" x2="${W-PR}" y2="${bankY}" stroke="var(--crit)" stroke-width="1" stroke-dasharray="4 3" opacity="0.85"/>` +
+    `<text x="${W-PR-2}" y="${bankY-3}" fill="var(--crit)" font-size="8" text-anchor="end">ตลิ่ง 4.60</text>` +
+    `<polyline points="${line}" fill="none" stroke="var(--teal)" stroke-width="1.6" stroke-linejoin="round"/>` +
+    `<circle cx="${x(s.length-1).toFixed(1)}" cy="${y(s[s.length-1].wl).toFixed(1)}" r="2.4" fill="var(--teal)"/>` + ticks;
+}
+
+x191Load();
+setInterval(x191Load, 15 * 60 * 1000);
 
 /* init */
 loadRadar();
