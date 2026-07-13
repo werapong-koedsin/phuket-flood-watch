@@ -1,7 +1,7 @@
 {
- "generated_utc": "2026-07-13T05:38:16Z",
- "latest_frame_utc": "2026-07-13T05:30:00Z",
- "latest_frame_unix": 1783920600,
+ "generated_utc": "2026-07-13T05:53:20Z",
+ "latest_frame_utc": "2026-07-13T05:50:00Z",
+ "latest_frame_unix": 1783921800,
  "steps_min": [
   10,
   20,
